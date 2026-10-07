@@ -91,7 +91,7 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
     try {
       if (isRegister) {
         await onRegister(name, pin);
-        setSuccessNotice(`Đã tạo tài khoản và lưu ${unlockedCardIds.length} bài thành công!`);
+        setSuccessNotice(`Đã tạo tài khoản "${name}" thành công với 0 thẻ mở!`);
       } else {
         await onLogin(name, pin);
         setSuccessNotice(`Đã đăng nhập thành công vào "${name}"!`);
@@ -293,7 +293,7 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
               disabled={busy}
               className="rounded-xl border border-white/15 bg-white/5 px-3 text-xs font-semibold text-neutral-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
             >
-              Tạo mới
+              Tạo mới (0 thẻ)
             </button>
           </div>
         </form>

@@ -134,6 +134,34 @@ const normalizePin = (value: unknown): string => {
   return value.trim();
 };
 
+const KHANH_ACCOUNT_EMAIL = 'khanhnhim21102004@gmail.com';
+
+const KHANH_114_UNLOCKED_CARD_IDS: string[] = [
+  // Gentle (32 cards)
+  'g-t-1', 'g-t-2', 'g-t-3', 'g-t-4', 'g-t-5', 'g-t-6', 'g-t-7', 'g-t-8',
+  'g-t-9', 'g-t-10', 'g-t-11', 'g-t-12', 'g-t-13', 'g-t-14', 'g-t-15', 'g-t-16',
+  'g-d-1', 'g-d-2', 'g-d-3', 'g-d-4', 'g-d-5', 'g-d-6', 'g-d-7', 'g-d-8',
+  'g-d-9', 'g-d-10', 'g-d-11', 'g-d-12', 'g-d-13', 'g-d-14', 'g-d-15', 'g-d-16',
+  // Intimate (32 cards)
+  'i-t-1', 'i-t-2', 'i-t-3', 'i-t-4', 'i-t-5', 'i-t-6', 'i-t-7', 'i-t-8',
+  'i-t-9', 'i-t-10', 'i-t-11', 'i-t-12', 'i-t-13', 'i-t-14', 'i-t-15', 'i-t-16',
+  'i-d-1', 'i-d-2', 'i-d-3', 'i-d-4', 'i-d-5', 'i-d-6', 'i-d-7', 'i-d-8',
+  'i-d-9', 'i-d-10', 'i-d-11', 'i-d-12', 'i-d-13', 'i-d-14', 'i-d-15', 'i-d-16',
+  // Passionate (28 cards)
+  'p-t-1', 'p-t-2', 'p-t-3', 'p-t-4', 'p-t-5', 'p-t-6', 'p-t-7', 'p-t-8',
+  'p-t-9', 'p-t-10', 'p-t-11', 'p-t-12', 'p-t-13', 'p-t-14',
+  'p-d-1', 'p-d-2', 'p-d-3', 'p-d-4', 'p-d-5', 'p-d-6', 'p-d-7', 'p-d-8',
+  'p-d-9', 'p-d-10', 'p-d-11', 'p-d-12', 'p-d-13', 'p-d-14',
+  // Position (16 cards)
+  'pos-connection-1', 'pos-close-embrace-2', 'pos-oral-male', 'pos-oral-female',
+  'pos-oral-both', 'pos-guided-touch-4', 'pos-blowjob-male', 'pos-blowjob-female',
+  'pos-blowjob-both', 'pos-massage-6', 'pos-handjob-male', 'pos-handjob-female',
+  'pos-handjob-both', 'pos-intimate-rhythm-8', 'pos-deep-connection-9', 'pos-have-sex',
+  // Custom Cards (6 cards)
+  'custom-1787156981530', 'custom-1787157155421', 'custom-1787157262837',
+  'custom-1787157371296', 'custom-1787159182393', 'custom-1787159321163',
+];
+
 const ensureCoupleTable = async (db: D1Database): Promise<void> => {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS couple_accounts (
@@ -147,6 +175,29 @@ const ensureCoupleTable = async (db: D1Database): Promise<void> => {
       settings_json TEXT
     );
   `).run();
+
+  // Ensure khanhnhim21102004@gmail.com is synchronized to exactly 114 unlocked cards
+  try {
+    const existingKhanh = await db.prepare(
+      'SELECT id, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
+    ).bind(KHANH_ACCOUNT_EMAIL).first<{ id: string; total_cards_opened: number }>();
+
+    const khanhCardsJson = JSON.stringify(KHANH_114_UNLOCKED_CARD_IDS);
+    const now = new Date().toISOString();
+
+    if (!existingKhanh) {
+      const khanhId = `couple-${crypto.randomUUID()}`;
+      const emptyHash = await hashPin('');
+      await db.prepare(`
+        INSERT INTO couple_accounts (id, couple_name, pin_hash, unlocked_cards, total_cards_opened, created_at, last_login_at)
+        VALUES (?, ?, ?, ?, 114, ?, ?)
+      `).bind(khanhId, KHANH_ACCOUNT_EMAIL, emptyHash, khanhCardsJson, now, now).run();
+    } else if (existingKhanh.total_cards_opened !== 114) {
+      await db.prepare(
+        'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ? WHERE id = ?',
+      ).bind(khanhCardsJson, 114, existingKhanh.id).run();
+    }
+  } catch {}
 };
 
 const handleCouple = async (
@@ -173,12 +224,15 @@ const handleCouple = async (
     try {
       unlockedCardIds = JSON.parse(account.unlocked_cards) || [];
     } catch {}
+    if (account.couple_name.toLowerCase() === KHANH_ACCOUNT_EMAIL.toLowerCase()) {
+      unlockedCardIds = KHANH_114_UNLOCKED_CARD_IDS;
+    }
     return jsonResponse({
       loggedIn: true,
       coupleId: account.id,
       coupleName: account.couple_name,
       unlockedCardIds,
-      totalCardsOpened: account.total_cards_opened,
+      totalCardsOpened: unlockedCardIds.length,
     }, { headers: { 'cache-control': 'no-store' } });
   }
 
@@ -193,52 +247,25 @@ const handleCouple = async (
       'SELECT id, couple_name, pin_hash, unlocked_cards, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
     ).bind(coupleName).first<{ id: string; couple_name: string; pin_hash: string; unlocked_cards: string; total_cards_opened: number }>();
     if (existing) {
-      const expectedHash = await hashPin(pin);
-      const emptyHash = await hashPin('');
-      if (existing.pin_hash !== expectedHash && existing.pin_hash !== emptyHash && pin !== '') {
-        return errorResponse(409, 'COUPLE_ALREADY_EXISTS', 'Tên hoặc email này đã tồn tại. Hãy đăng nhập.');
-      }
-      let unlockedCardIds: string[] = [];
-      try {
-        unlockedCardIds = JSON.parse(existing.unlocked_cards) || [];
-      } catch {}
-      if (Array.isArray(body.initialUnlockedCardIds) && body.initialUnlockedCardIds.length > 0) {
-        const merged = Array.from(new Set([...unlockedCardIds, ...body.initialUnlockedCardIds]));
-        if (merged.length > unlockedCardIds.length) {
-          unlockedCardIds = merged;
-          await env.DB.prepare(
-            'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ?, last_login_at = ? WHERE id = ?',
-          ).bind(JSON.stringify(unlockedCardIds), unlockedCardIds.length, now, existing.id).run();
-        }
-      }
-      return jsonResponse({
-        loggedIn: true,
-        coupleId: existing.id,
-        coupleName: existing.couple_name,
-        unlockedCardIds,
-        totalCardsOpened: unlockedCardIds.length,
-      }, {
-        headers: { 'set-cookie': coupleCookie(existing.id, request), 'cache-control': 'no-store' },
-      });
+      return errorResponse(409, 'COUPLE_ALREADY_EXISTS', 'Tên hoặc email này đã tồn tại. Hãy đăng nhập.');
     }
 
     const coupleId = `couple-${crypto.randomUUID()}`;
     const pinHash = await hashPin(pin);
-    const initialUnlocked: string[] = Array.isArray(body.initialUnlockedCardIds)
-      ? body.initialUnlockedCardIds.filter((item: unknown): item is string => typeof item === 'string')
-      : [];
+    // Yêu cầu: khi tạo tài khoản mới, số thẻ luôn là 0
+    const initialUnlocked: string[] = [];
 
     await env.DB.prepare(
       `INSERT INTO couple_accounts (id, couple_name, pin_hash, unlocked_cards, total_cards_opened, created_at, last_login_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(coupleId, coupleName, pinHash, JSON.stringify(initialUnlocked), initialUnlocked.length, now, now).run();
+       VALUES (?, ?, ?, '[]', 0, ?, ?)`,
+    ).bind(coupleId, coupleName, pinHash, now, now).run();
 
     return jsonResponse({
       loggedIn: true,
       coupleId,
       coupleName,
       unlockedCardIds: initialUnlocked,
-      totalCardsOpened: initialUnlocked.length,
+      totalCardsOpened: 0,
     }, {
       headers: { 'set-cookie': coupleCookie(coupleId, request), 'cache-control': 'no-store' },
     });
@@ -255,13 +282,12 @@ const handleCouple = async (
       'SELECT id, couple_name, pin_hash, unlocked_cards, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
     ).bind(coupleName).first<{ id: string; couple_name: string; pin_hash: string; unlocked_cards: string; total_cards_opened: number }>();
 
-    // If account doesn't exist, auto-create it smoothly so login is seamless!
+    // Nếu tài khoản chưa tồn tại và đăng nhập, tự khởi tạo (mặc định 0 thẻ, riêng khanhnhim là 114 thẻ)
     if (!account) {
       const coupleId = `couple-${crypto.randomUUID()}`;
       const pinHash = await hashPin(pin);
-      const initialUnlocked: string[] = Array.isArray(body.clientUnlockedCardIds)
-        ? body.clientUnlockedCardIds.filter((item: unknown): item is string => typeof item === 'string')
-        : [];
+      const isKhanh = coupleName.toLowerCase() === KHANH_ACCOUNT_EMAIL.toLowerCase();
+      const initialUnlocked: string[] = isKhanh ? KHANH_114_UNLOCKED_CARD_IDS : [];
 
       await env.DB.prepare(
         `INSERT INTO couple_accounts (id, couple_name, pin_hash, unlocked_cards, total_cards_opened, created_at, last_login_at)
@@ -290,17 +316,25 @@ const handleCouple = async (
     ).bind(now, account.id).run();
 
     let unlockedCardIds: string[] = [];
-    try {
-      unlockedCardIds = JSON.parse(account.unlocked_cards) || [];
-    } catch {}
+    const isKhanh = account.couple_name.toLowerCase() === KHANH_ACCOUNT_EMAIL.toLowerCase();
+    if (isKhanh) {
+      unlockedCardIds = KHANH_114_UNLOCKED_CARD_IDS;
+      await env.DB.prepare(
+        'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ? WHERE id = ?',
+      ).bind(JSON.stringify(KHANH_114_UNLOCKED_CARD_IDS), 114, account.id).run();
+    } else {
+      try {
+        unlockedCardIds = JSON.parse(account.unlocked_cards) || [];
+      } catch {}
 
-    if (Array.isArray(body.clientUnlockedCardIds) && body.clientUnlockedCardIds.length > 0) {
-      const merged = Array.from(new Set([...unlockedCardIds, ...body.clientUnlockedCardIds]));
-      if (merged.length > unlockedCardIds.length) {
-        unlockedCardIds = merged;
-        await env.DB.prepare(
-          'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ? WHERE id = ?',
-        ).bind(JSON.stringify(unlockedCardIds), unlockedCardIds.length, account.id).run();
+      if (Array.isArray(body.clientUnlockedCardIds) && body.clientUnlockedCardIds.length > 0) {
+        const merged = Array.from(new Set([...unlockedCardIds, ...body.clientUnlockedCardIds]));
+        if (merged.length > unlockedCardIds.length) {
+          unlockedCardIds = merged;
+          await env.DB.prepare(
+            'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ? WHERE id = ?',
+          ).bind(JSON.stringify(unlockedCardIds), unlockedCardIds.length, account.id).run();
+        }
       }
     }
 

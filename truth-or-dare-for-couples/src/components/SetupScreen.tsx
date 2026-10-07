@@ -161,27 +161,18 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
 
         <div className="flex items-center gap-2">
           {coupleName && (
-            <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-950/50 px-2.5 py-1 text-xs text-rose-200">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <button
-                type="button"
-                onClick={onOpenAccountModal}
-                className="max-w-[120px] truncate hover:text-white"
-                title="Quản lý tài khoản"
-              >
-                {coupleName}
-              </button>
-              {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="ml-1 text-[11px] text-rose-300 hover:text-white underline"
-                  title="Đăng xuất"
-                >
-                  Đăng xuất
-                </button>
+            <button
+              type="button"
+              onClick={onOpenAccountModal}
+              className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-3 py-1 text-xs text-emerald-200 hover:border-emerald-300 hover:text-white transition-colors cursor-pointer"
+              title="Xem thông tin tài khoản & Đăng xuất"
+            >
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span className="max-w-[120px] truncate">{coupleName}</span>
+              {typeof unlockedCount === 'number' && (
+                <span className="text-[11px] font-bold text-emerald-300">({unlockedCount})</span>
               )}
-            </div>
+            </button>
           )}
 
           <button

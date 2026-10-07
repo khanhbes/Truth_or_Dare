@@ -246,27 +246,23 @@ export default function App() {
       getPlayerSession().catch(() => ({ loggedIn: false } as PlayerSession)),
     ]).then(async ([cSession, pSession]) => {
       if (!active) return;
-      const localCards = loadStoredStringArray(STORAGE_KEYS.UNLOCKED_CARDS);
 
       if (cSession.loggedIn) {
         setCoupleSession(cSession);
         setPlayerSession({ loggedIn: true, displayName: cSession.coupleName });
-        if (Array.isArray(cSession.unlockedCardIds) && cSession.unlockedCardIds.length > 0) {
-          setUnlockedCardIds((current) => Array.from(new Set([...current, ...cSession.unlockedCardIds!])));
-        }
-        if (localCards.length > 0) {
-          void syncCoupleUnlockedCards(localCards);
-        }
+        const cards = Array.isArray(cSession.unlockedCardIds) ? cSession.unlockedCardIds : [];
+        setUnlockedCardIds(cards);
+        try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
       } else if (!deliberateLogout) {
-        // Automatically save current opened cards into khanhnhim21102004@gmail.com!
+        // Automatically reconnect to khanhnhim21102004@gmail.com if not deliberately logged out
         try {
-          const autoSession = await loginCouple('khanhnhim21102004@gmail.com', '', localCards);
+          const autoSession = await loginCouple('khanhnhim21102004@gmail.com', '');
           if (autoSession.loggedIn) {
             setCoupleSession(autoSession);
             setPlayerSession({ loggedIn: true, displayName: autoSession.coupleName });
-            if (Array.isArray(autoSession.unlockedCardIds) && autoSession.unlockedCardIds.length > 0) {
-              setUnlockedCardIds((current) => Array.from(new Set([...current, ...autoSession.unlockedCardIds!])));
-            }
+            const cards = Array.isArray(autoSession.unlockedCardIds) ? autoSession.unlockedCardIds : [];
+            setUnlockedCardIds(cards);
+            try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
             return;
           }
         } catch {}
@@ -922,7 +918,10 @@ export default function App() {
     await logoutPlayer().catch(() => undefined);
     setCoupleSession(null);
     setPlayerSession({ loggedIn: false });
-    setForceShowLoginScreen(true);
+    setUnlockedCardIds([]);
+    try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
+    setShowAccountModal(false);
+    setForceShowLoginScreen(false);
     setScreen('intro');
   };
 
@@ -949,20 +948,23 @@ export default function App() {
         }}
         onCoupleLogin={async (coupleName, pin) => {
           try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const session = await loginCouple(coupleName, pin, unlockedCardIds);
+          const isKhanh = coupleName.trim().toLowerCase() === 'khanhnhim21102004@gmail.com';
+          const session = await loginCouple(coupleName, pin, isKhanh ? [] : unlockedCardIds);
           setCoupleSession(session);
           setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-          if (Array.isArray(session.unlockedCardIds) && session.unlockedCardIds.length > 0) {
-            setUnlockedCardIds((current) => Array.from(new Set([...current, ...session.unlockedCardIds!])));
-          }
+          const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
+          setUnlockedCardIds(cards);
+          try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
           setForceShowLoginScreen(false);
           setPlayerSessionError(null);
         }}
         onCoupleRegister={async (coupleName, pin) => {
           try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const session = await registerCouple(coupleName, pin, unlockedCardIds);
+          const session = await registerCouple(coupleName, pin, []);
           setCoupleSession(session);
           setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+          setUnlockedCardIds([]);
+          try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
           setForceShowLoginScreen(false);
           setPlayerSessionError(null);
         }}
@@ -989,17 +991,6 @@ export default function App() {
             onLogout={handleLogout}
             onOpenLogin={() => setForceShowLoginScreen(true)}
             onOpenAccountModal={() => setShowAccountModal(true)}
-            onQuickLoginKhanh={async () => {
-              try {
-                try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-                const session = await loginCouple('khanhnhim21102004@gmail.com', '', unlockedCardIds);
-                setCoupleSession(session);
-                setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-                if (Array.isArray(session.unlockedCardIds) && session.unlockedCardIds.length > 0) {
-                  setUnlockedCardIds((current) => Array.from(new Set([...current, ...session.unlockedCardIds!])));
-                }
-              } catch {}
-            }}
             onStart={() => appMode === 'developer' ? openCollection('intro') : setScreen('setup')}
             onOpenCollection={() => openCollection('intro')}
             onOpenRules={() => setShowRules(true)}
@@ -1148,22 +1139,28 @@ export default function App() {
             unlockedCardIds={unlockedCardIds}
             onLogin={async (coupleName, pin) => {
               try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const session = await loginCouple(coupleName, pin, unlockedCardIds);
+              const isKhanh = coupleName.trim().toLowerCase() === 'khanhnhim21102004@gmail.com';
+              const session = await loginCouple(coupleName, pin, isKhanh ? [] : unlockedCardIds);
               setCoupleSession(session);
               setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-              if (Array.isArray(session.unlockedCardIds) && session.unlockedCardIds.length > 0) {
-                setUnlockedCardIds((current) => Array.from(new Set([...current, ...session.unlockedCardIds!])));
-              }
+              const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
+              setUnlockedCardIds(cards);
+              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
             }}
             onRegister={async (coupleName, pin) => {
               try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const session = await registerCouple(coupleName, pin, unlockedCardIds);
+              const session = await registerCouple(coupleName, pin, []);
               setCoupleSession(session);
               setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+              setUnlockedCardIds([]);
+              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
             }}
             onLogout={handleLogout}
             onClose={() => setShowAccountModal(false)}
-            onRefreshUnlocked={(cards) => setUnlockedCardIds(cards)}
+            onRefreshUnlocked={(cards) => {
+              setUnlockedCardIds(cards);
+              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
+            }}
           />
         )}
       </AnimatePresence>

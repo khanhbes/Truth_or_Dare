@@ -172,6 +172,9 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setCoupleAction('register');
+                  if (coupleName === 'khanhnhim21102004@gmail.com') {
+                    setCoupleName('');
+                  }
                   setError('');
                 }}
                 className={`rounded-lg px-3 py-1 font-medium transition-colors ${
@@ -196,7 +199,7 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                   maxLength={120}
                   autoComplete="email"
                   autoFocus
-                  placeholder="khanhnhim21102004@gmail.com"
+                  placeholder={coupleAction === 'register' ? 'email-cua-ban@gmail.com' : 'khanhnhim21102004@gmail.com'}
                   className="mt-1.5 min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] px-3.5 text-sm text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
                 />
               </div>
@@ -234,15 +237,21 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                   </>
                 ) : (
                   <>
-                    <UserPlus className="h-4 w-4" /> {busy ? 'Đang khởi tạo…' : 'Tạo tài khoản & Lưu tiến trình'}
+                    <UserPlus className="h-4 w-4" /> {busy ? 'Đang khởi tạo…' : 'Tạo tài khoản mới (0 thẻ)'}
                   </>
                 )}
               </button>
             </form>
 
-            <p className="mt-3.5 text-center text-[11px] text-neutral-400">
-              🔒 Bài đã mở sẽ tự động đồng bộ trên đám mây, không bao giờ bị mất.
-            </p>
+            {coupleAction === 'register' ? (
+              <p className="mt-3.5 text-center text-[11px] text-amber-200/80">
+                ✨ Tài khoản mới sẽ bắt đầu với <strong>0 thẻ đã mở</strong>. Tiến trình sẽ lưu tự động khi chơi.
+              </p>
+            ) : (
+              <p className="mt-3.5 text-center text-[11px] text-neutral-400">
+                🔒 Bài đã mở sẽ tự động đồng bộ trên đám mây, không bao giờ bị mất.
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleGuestSubmit} className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-5 text-left backdrop-blur-xl">
