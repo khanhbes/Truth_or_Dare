@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Heart, User, EyeOff, Shuffle, Check, ArrowLeft, Play, ChevronDown, HelpCircle, Shirt, ShieldCheck } from 'lucide-react';
+import { Heart, User, EyeOff, Shuffle, Check, ArrowLeft, Play, ChevronDown, HelpCircle, Shirt, ShieldCheck, LogOut } from 'lucide-react';
 import { CardLevel, GameSettings, OutfitConfig, Player } from '../types';
 import { LEVEL_INFO } from '../data/cards';
 import { soundEngine } from '../utils/audio';
@@ -10,6 +10,10 @@ interface SetupScreenProps {
   initialPlayer1: Player;
   initialPlayer2: Player;
   initialSettings: GameSettings;
+  coupleName?: string;
+  unlockedCount?: number;
+  onOpenAccountModal?: () => void;
+  onLogout?: () => void;
   onBack: () => void;
   onOpenRules: () => void;
   onStartGame: (p1: Player, p2: Player, settings: GameSettings) => void;
@@ -73,6 +77,10 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
   initialPlayer1,
   initialPlayer2,
   initialSettings,
+  coupleName,
+  unlockedCount,
+  onOpenAccountModal,
+  onLogout,
   onBack,
   onOpenRules,
   onStartGame,
@@ -137,7 +145,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
   return (
     <div className="relative z-10 max-w-5xl mx-auto px-4 py-6 text-white">
       {/* Navigation Header */}
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-6">
+      <div className="flex items-center justify-between gap-2 mb-6">
         <button
           type="button"
           onClick={onBack}
@@ -146,18 +154,46 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
           <ArrowLeft className="w-4 h-4" />
           <span className="hidden sm:inline">Quay lại</span>
         </button>
-        <h2 className="serif-title text-center text-xl sm:text-3xl font-bold text-[#D4AF37] uppercase tracking-wider">
+
+        <h2 className="serif-title text-center text-lg sm:text-2xl font-bold text-[#D4AF37] uppercase tracking-wider">
           Thiết Lập Trò Chơi
         </h2>
-        <button
-          type="button"
-          onClick={onOpenRules}
-          aria-label="Cách chơi và luật phạt"
-          title="Cách chơi & luật phạt"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-rose-500/25 bg-rose-950/30 text-rose-300 transition-all hover:border-rose-400/55 hover:bg-rose-500/10 hover:text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-        >
-          <HelpCircle className="h-4.5 w-4.5" />
-        </button>
+
+        <div className="flex items-center gap-2">
+          {coupleName && (
+            <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-950/50 px-2.5 py-1 text-xs text-rose-200">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <button
+                type="button"
+                onClick={onOpenAccountModal}
+                className="max-w-[120px] truncate hover:text-white"
+                title="Quản lý tài khoản"
+              >
+                {coupleName}
+              </button>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="ml-1 text-[11px] text-rose-300 hover:text-white underline"
+                  title="Đăng xuất"
+                >
+                  Đăng xuất
+                </button>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={onOpenRules}
+            aria-label="Cách chơi và luật phạt"
+            title="Cách chơi & luật phạt"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-rose-500/25 bg-rose-950/30 text-rose-300 transition-all hover:border-rose-400/55 hover:bg-rose-500/10 hover:text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+          >
+            <HelpCircle className="h-4.5 w-4.5" />
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">

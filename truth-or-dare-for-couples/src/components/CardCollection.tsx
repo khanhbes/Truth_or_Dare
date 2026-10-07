@@ -24,6 +24,7 @@ import {
   CloudOff,
   Download,
   DatabaseBackup,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   TurnAudience,
@@ -83,6 +84,8 @@ export interface CardCollectionProps {
   onExportCatalog?: () => Promise<string>;
   onImportCatalog?: (file: File) => Promise<string>;
   onCreateCloudBackup?: () => Promise<string>;
+  coupleName?: string;
+  onOpenAccountModal?: () => void;
   onBack: () => void;
 }
 
@@ -343,6 +346,8 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   onExportCatalog,
   onImportCatalog,
   onCreateCloudBackup,
+  coupleName,
+  onOpenAccountModal,
   onBack,
 }) => {
   const prefersReducedMotion = useReducedMotion();
@@ -964,6 +969,18 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         </h2>
 
         <div className="flex items-center justify-end gap-2">
+          {onOpenAccountModal && (
+            <button
+              type="button"
+              onClick={onOpenAccountModal}
+              title={coupleName ? `Tài khoản: ${coupleName}` : 'Đăng nhập tài khoản'}
+              className="flex min-h-10 items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-950/50 px-3 text-xs text-rose-200 transition-colors hover:border-rose-300 hover:text-white cursor-pointer"
+            >
+              <ShieldCheck className="h-4 w-4 text-emerald-400" />
+              <span className="hidden sm:inline max-w-[120px] truncate">{coupleName || 'Tài khoản'}</span>
+            </button>
+          )}
+
           {isDeveloper && (
             <span className="hidden items-center gap-1 rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-200 sm:flex" aria-label="Khu vực quản trị nội dung">
               <Code2 className="h-3 w-3" aria-hidden="true" /> Admin

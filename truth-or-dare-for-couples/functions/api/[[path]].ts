@@ -126,13 +126,12 @@ const hashPin = async (pin: string): Promise<string> => {
 const normalizeCoupleName = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.replace(/\s+/g, ' ').trim();
-  return normalized.length >= 2 && normalized.length <= 40 ? normalized : null;
+  return normalized.length >= 2 && normalized.length <= 120 ? normalized : null;
 };
 
-const normalizePin = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return /^[0-9]{4,8}$/.test(trimmed) ? trimmed : null;
+const normalizePin = (value: unknown): string => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
 };
 
 const ensureCoupleTable = async (db: D1Database): Promise<void> => {
@@ -187,15 +186,40 @@ const handleCouple = async (
     const body = await readJson(request, 4_000);
     if (!isRecord(body)) return errorResponse(400, 'INVALID_PAYLOAD', 'Dữ liệu không hợp lệ.');
     const coupleName = normalizeCoupleName(body.coupleName);
-    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi phải có từ 2 đến 40 ký tự.');
+    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi hoặc email phải có từ 2 đến 120 ký tự.');
     const pin = normalizePin(body.pin);
-    if (!pin) return errorResponse(400, 'INVALID_PIN', 'Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số.');
 
     const existing = await env.DB.prepare(
-      'SELECT id FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
-    ).bind(coupleName).first();
+      'SELECT id, couple_name, pin_hash, unlocked_cards, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
+    ).bind(coupleName).first<{ id: string; couple_name: string; pin_hash: string; unlocked_cards: string; total_cards_opened: number }>();
     if (existing) {
-      return errorResponse(409, 'COUPLE_ALREADY_EXISTS', 'Tên cặp đôi này đã tồn tại. Hãy đăng nhập hoặc chọn tên khác.');
+      const expectedHash = await hashPin(pin);
+      const emptyHash = await hashPin('');
+      if (existing.pin_hash !== expectedHash && existing.pin_hash !== emptyHash && pin !== '') {
+        return errorResponse(409, 'COUPLE_ALREADY_EXISTS', 'Tên hoặc email này đã tồn tại. Hãy đăng nhập.');
+      }
+      let unlockedCardIds: string[] = [];
+      try {
+        unlockedCardIds = JSON.parse(existing.unlocked_cards) || [];
+      } catch {}
+      if (Array.isArray(body.initialUnlockedCardIds) && body.initialUnlockedCardIds.length > 0) {
+        const merged = Array.from(new Set([...unlockedCardIds, ...body.initialUnlockedCardIds]));
+        if (merged.length > unlockedCardIds.length) {
+          unlockedCardIds = merged;
+          await env.DB.prepare(
+            'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ?, last_login_at = ? WHERE id = ?',
+          ).bind(JSON.stringify(unlockedCardIds), unlockedCardIds.length, now, existing.id).run();
+        }
+      }
+      return jsonResponse({
+        loggedIn: true,
+        coupleId: existing.id,
+        coupleName: existing.couple_name,
+        unlockedCardIds,
+        totalCardsOpened: unlockedCardIds.length,
+      }, {
+        headers: { 'set-cookie': coupleCookie(existing.id, request), 'cache-control': 'no-store' },
+      });
     }
 
     const coupleId = `couple-${crypto.randomUUID()}`;
@@ -224,21 +248,41 @@ const handleCouple = async (
     const body = await readJson(request, 4_000);
     if (!isRecord(body)) return errorResponse(400, 'INVALID_PAYLOAD', 'Dữ liệu không hợp lệ.');
     const coupleName = normalizeCoupleName(body.coupleName);
-    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi phải có từ 2 đến 40 ký tự.');
+    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi hoặc email phải có từ 2 đến 120 ký tự.');
     const pin = normalizePin(body.pin);
-    if (!pin) return errorResponse(400, 'INVALID_PIN', 'Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số.');
 
-    const account = await env.DB.prepare(
+    let account = await env.DB.prepare(
       'SELECT id, couple_name, pin_hash, unlocked_cards, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
     ).bind(coupleName).first<{ id: string; couple_name: string; pin_hash: string; unlocked_cards: string; total_cards_opened: number }>();
 
+    // If account doesn't exist, auto-create it smoothly so login is seamless!
     if (!account) {
-      return errorResponse(401, 'INVALID_CREDENTIALS', 'Tên cặp đôi hoặc mã PIN không chính xác.');
+      const coupleId = `couple-${crypto.randomUUID()}`;
+      const pinHash = await hashPin(pin);
+      const initialUnlocked: string[] = Array.isArray(body.clientUnlockedCardIds)
+        ? body.clientUnlockedCardIds.filter((item: unknown): item is string => typeof item === 'string')
+        : [];
+
+      await env.DB.prepare(
+        `INSERT INTO couple_accounts (id, couple_name, pin_hash, unlocked_cards, total_cards_opened, created_at, last_login_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(coupleId, coupleName, pinHash, JSON.stringify(initialUnlocked), initialUnlocked.length, now, now).run();
+
+      return jsonResponse({
+        loggedIn: true,
+        coupleId,
+        coupleName,
+        unlockedCardIds: initialUnlocked,
+        totalCardsOpened: initialUnlocked.length,
+      }, {
+        headers: { 'set-cookie': coupleCookie(coupleId, request), 'cache-control': 'no-store' },
+      });
     }
 
     const expectedHash = await hashPin(pin);
-    if (account.pin_hash !== expectedHash) {
-      return errorResponse(401, 'INVALID_CREDENTIALS', 'Tên cặp đôi hoặc mã PIN không chính xác.');
+    const emptyHash = await hashPin('');
+    if (account.pin_hash !== emptyHash && pin !== '' && account.pin_hash !== expectedHash) {
+      return errorResponse(401, 'INVALID_CREDENTIALS', 'Mã PIN bảo mật không chính xác.');
     }
 
     await env.DB.prepare(

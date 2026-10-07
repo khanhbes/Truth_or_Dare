@@ -23,6 +23,7 @@ import {
   Star,
   Shuffle,
   TrendingUp,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   CardItem,
@@ -149,6 +150,8 @@ interface GameTableProps {
   onDrawPositionCard: (cardId: string) => void;
   onOpenPositionCard: (cardId: string) => void;
   onNavigationLockChange?: (locked: boolean) => void;
+  coupleName?: string;
+  onOpenAccountModal?: () => void;
 }
 
 interface PlayerOutfitStatusProps {
@@ -276,6 +279,8 @@ export const GameTable: React.FC<GameTableProps> = ({
   onDrawPositionCard,
   onOpenPositionCard,
   onNavigationLockChange,
+  coupleName,
+  onOpenAccountModal,
 }) => {
   const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
   const [isMuted, setIsMuted] = useState(soundEngine.getMuted());
@@ -1364,6 +1369,20 @@ export const GameTable: React.FC<GameTableProps> = ({
             <Trophy className="w-4 h-4 text-rose-400" />
             <span className="hidden sm:inline">Thống kê</span>
           </button>
+
+          {onOpenAccountModal && (
+            <button
+              type="button"
+              onClick={onOpenAccountModal}
+              disabled={navigationLocked}
+              aria-label="Tài khoản và đồng bộ"
+              title={coupleName ? `Tài khoản: ${coupleName}` : 'Đăng nhập tài khoản'}
+              className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-2.5 border border-rose-500/30 text-rose-200 hover:border-rose-400 hover:text-white transition-all text-xs cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span className="hidden lg:inline max-w-[110px] truncate">{coupleName || 'Tài khoản'}</span>
+            </button>
+          )}
         </div>
       </div>
 

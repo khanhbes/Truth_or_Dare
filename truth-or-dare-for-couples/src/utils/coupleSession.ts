@@ -39,7 +39,7 @@ export const getCoupleSession = async (): Promise<CoupleSession> => {
 
 export const registerCouple = async (
   coupleName: string,
-  pin: string,
+  pin: string = '',
   initialUnlockedCardIds: string[] = [],
 ): Promise<CoupleSession> => {
   return readJson<CoupleSession>(
@@ -54,7 +54,7 @@ export const registerCouple = async (
 
 export const loginCouple = async (
   coupleName: string,
-  pin: string,
+  pin: string = '',
   clientUnlockedCardIds: string[] = [],
 ): Promise<CoupleSession> => {
   return readJson<CoupleSession>(
