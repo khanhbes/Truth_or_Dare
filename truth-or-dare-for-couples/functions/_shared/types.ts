@@ -43,3 +43,14 @@ export interface AssetRow {
   revision: number;
   created_at: string;
 }
+
+export interface CoupleAccountRow {
+  id: string;
+  couple_name: string;
+  pin_hash: string;
+  unlocked_cards: string;
+  total_cards_opened: number;
+  created_at: string;
+  last_login_at: string;
+  settings_json?: string | null;
+}

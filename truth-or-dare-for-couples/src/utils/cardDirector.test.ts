@@ -15,3 +15,18 @@ test('director suppresses repeated type and heat spikes while keeping every card
   assert.ok(chooseDirectedCard(candidates, weights, () => .999)?.id);
   assert.equal(getCardHeat(card('explicit', 'truth', 7)), 7);
 });
+
+test('director reduces weight of already-unlocked cards by 90% when unopened cards exist', () => {
+  const state = createCardDirectorState();
+  const c1Unopened = card('c1-new', 'truth', 4);
+  const c2Unlocked = card('c2-old', 'truth', 4);
+  const candidates = [c1Unopened, c2Unlocked];
+
+  // Pass c2-old in accountUnlockedCardIds
+  const weights = getDirectorWeights(candidates, state, 0, outfits, ['c2-old']);
+  const wNew = weights.get('c1-new') ?? 0;
+  const wOld = weights.get('c2-old') ?? 0;
+
+  // wOld should be reduced by roughly 10x relative to wNew
+  assert.ok(wNew > wOld * 8, `Expected wNew (${wNew}) to be roughly 10x wOld (${wOld})`);
+});

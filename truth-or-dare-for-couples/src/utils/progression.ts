@@ -462,6 +462,8 @@ export interface SelectJourneyCardOptions {
   /** Session history used to avoid repeating one clothing family. */
   clothingHistory?: readonly ClothingEventType[];
   firstRemoval?: readonly [boolean, boolean];
+  /** Optional set of card IDs previously unlocked in the couple account to reduce repeats. */
+  accountUnlockedCardIds?: readonly string[] | ReadonlySet<string>;
   /** Optional session director. Omit it for legacy deterministic selection. */
   directorState?: CardDirectorState;
   random?: () => number;
@@ -638,6 +640,7 @@ export const selectJourneyCard = (options: SelectJourneyCardOptions): JourneyCar
       options.directorState,
       options.actorIndex,
       options.outfits,
+      options.accountUnlockedCardIds,
     );
     const starWeightsByType = new Map(STANDARD_CARD_TYPES.map((type) => {
       const typeCards = candidates.filter((card) => card.type === type);

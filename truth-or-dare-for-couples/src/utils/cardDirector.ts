@@ -8,10 +8,16 @@ export interface CardDirectorState {
   seenCardIds: string[];
   cardsCompletedCount: number;
   starsSpentThisSession: number;
+  accountUnlockedCardIds?: string[];
 }
 
-export const createCardDirectorState = (): CardDirectorState => ({
-  heatHistory: [], typeHistory: [], seenCardIds: [], cardsCompletedCount: 0, starsSpentThisSession: 0,
+export const createCardDirectorState = (accountUnlockedCardIds: string[] = []): CardDirectorState => ({
+  heatHistory: [],
+  typeHistory: [],
+  seenCardIds: [],
+  cardsCompletedCount: 0,
+  starsSpentThisSession: 0,
+  accountUnlockedCardIds,
 });
 
 export const getCardPhaseTag = (card: CardItem): CardPhaseTag => card.phaseTag ?? card.progression?.phaseTag ?? card.level;
@@ -55,11 +61,20 @@ const targetBalanceFactor = (card: CardItem, actorIndex: PlayerIndex, outfits: r
 
 /** Weights valid candidate cards without turning the draw into an argmax. */
 export const getDirectorWeights = (
-  candidates: readonly CardItem[], state: CardDirectorState, actorIndex: PlayerIndex, outfits: readonly [OutfitState, OutfitState],
+  candidates: readonly CardItem[],
+  state: CardDirectorState,
+  actorIndex: PlayerIndex,
+  outfits: readonly [OutfitState, OutfitState],
+  accountUnlockedCardIds?: readonly string[] | ReadonlySet<string>,
 ): Map<string, number> => {
   const recentHeat = state.heatHistory.length
     ? state.heatHistory.reduce((sum, heat) => sum + heat, 0) / state.heatHistory.length : 1;
   const lastTwo = state.typeHistory.slice(-2);
+
+  const rawUnlocked = accountUnlockedCardIds ?? state.accountUnlockedCardIds ?? [];
+  const unlockedSet = rawUnlocked instanceof Set ? rawUnlocked : new Set(rawUnlocked);
+  const hasUnopenedCandidates = candidates.some((c) => !unlockedSet.has(c.id));
+
   return new Map(candidates.map((card) => {
     const key = `${card.type}:${getCardPhaseTag(card)}` as const;
     const heat = getCardHeat(card);
@@ -68,7 +83,13 @@ export const getDirectorWeights = (
     const heatFactor = heat > recentHeat + 1.5 ? 0.28 : heat > recentHeat + .5 ? 0.65 : 1;
     const pacing = (repeatedType ? .58 : 1) * (repeatedPhase ? .45 : 1);
     const novelty = state.seenCardIds.includes(card.id) ? .72 : 1.18;
-    return [card.id, Math.max(.01, pacing * heatFactor * novelty * targetBalanceFactor(card, actorIndex, outfits))];
+    // 90% reduction penalty for cards that are already unlocked in the account
+    const unlockPenalty = hasUnopenedCandidates && unlockedSet.has(card.id) ? 0.1 : 1.0;
+
+    return [
+      card.id,
+      Math.max(.001, pacing * heatFactor * novelty * targetBalanceFactor(card, actorIndex, outfits) * unlockPenalty),
+    ];
   }));
 };
 

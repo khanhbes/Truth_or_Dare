@@ -5,12 +5,23 @@ import { soundEngine } from '../utils/audio';
 
 interface IntroScreenProps {
   mode: 'player' | 'developer';
+  coupleName?: string;
+  unlockedCount?: number;
+  onLogout?: () => void;
   onStart: () => void;
   onOpenCollection: () => void;
   onOpenRules: () => void;
 }
 
-export const IntroScreen: React.FC<IntroScreenProps> = ({ mode, onStart, onOpenCollection, onOpenRules }) => {
+export const IntroScreen: React.FC<IntroScreenProps> = ({
+  mode,
+  coupleName,
+  unlockedCount,
+  onLogout,
+  onStart,
+  onOpenCollection,
+  onOpenRules,
+}) => {
   const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
 
   const handleToggleMusic = () => {
@@ -22,20 +33,39 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({ mode, onStart, onOpenC
     <div className="relative z-10 flex flex-col items-center justify-between min-h-[90vh] px-4 py-8 max-w-4xl mx-auto text-center">
       {/* Top Header Bar with Music & Collection controls */}
       <div className="w-full px-2 py-1">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button
-          onClick={handleToggleMusic}
-          className="flex min-h-11 items-center gap-2 rounded-full border border-rose-500/30 bg-rose-950/40 px-3 text-xs text-rose-200 transition-all duration-300 hover:border-rose-400 md:text-sm"
-        >
-          {isMusicOn ? <Volume2 className="w-4 h-4 text-amber-400 animate-pulse" /> : <VolumeX className="w-4 h-4 text-neutral-400" />}
-          <span>{isMusicOn ? 'Nhạc lãng mạn: Bật' : 'Nhạc nền: Tắt'}</span>
+            onClick={handleToggleMusic}
+            className="flex min-h-11 items-center gap-2 rounded-full border border-rose-500/30 bg-rose-950/40 px-3 text-xs text-rose-200 transition-all duration-300 hover:border-rose-400 md:text-sm"
+          >
+            {isMusicOn ? <Volume2 className="w-4 h-4 text-amber-400 animate-pulse" /> : <VolumeX className="w-4 h-4 text-neutral-400" />}
+            <span>{isMusicOn ? 'Nhạc lãng mạn: Bật' : 'Nhạc nền: Tắt'}</span>
           </button>
 
+          {coupleName && (
+            <div className="flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-950/40 px-3 py-1.5 text-xs text-rose-200">
+              <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+              <span className="font-medium">{coupleName}</span>
+              {typeof unlockedCount === 'number' && (
+                <span className="text-[11px] text-neutral-400">({unlockedCount} bài)</span>
+              )}
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="ml-1 text-[11px] text-rose-300/80 hover:text-white underline"
+                >
+                  Đổi
+                </button>
+              )}
+            </div>
+          )}
+
           <button
-          onClick={onOpenCollection}
-          className="flex min-h-11 items-center gap-2 rounded-full border border-amber-500/30 bg-amber-950/40 px-3 text-xs text-amber-200 transition-all duration-300 hover:border-amber-400 md:text-sm"
-        >
-          <BookOpen className="w-4 h-4 text-amber-400" />
+            onClick={onOpenCollection}
+            className="flex min-h-11 items-center gap-2 rounded-full border border-amber-500/30 bg-amber-950/40 px-3 text-xs text-amber-200 transition-all duration-300 hover:border-amber-400 md:text-sm"
+          >
+            <BookOpen className="w-4 h-4 text-amber-400" />
             <span className="hidden min-[370px]:inline">Bộ sưu tập thẻ</span>
           </button>
         </div>

@@ -73,6 +73,12 @@ import {
   resolveClothingOpportunity,
 } from '../utils/clothingJourney';
 import {
+  createDynamicClothingSchedule,
+  getActiveClothingRemovalTarget,
+  injectClothingDirective,
+  updateDynamicClothingScheduler,
+} from '../utils/dynamicClothingScheduler';
+import {
   createCardDirectorState,
   recordDirectedCard,
   recordDirectorStarsSpent,
@@ -277,7 +283,13 @@ export const GameTable: React.FC<GameTableProps> = ({
   const [showPenaltyPrompt, setShowPenaltyPrompt] = useState(false);
   const [usedCardIds, setUsedCardIds] = useState<string[]>([]);
   const [clothingJourney, setClothingJourney] = useState(createClothingJourney);
-  const [cardDirectorState, setCardDirectorState] = useState(createCardDirectorState);
+  const [dynamicClothingScheduler, setDynamicClothingScheduler] = useState(() =>
+    createDynamicClothingSchedule(outfitStates),
+  );
+  const currentTriggerRef = useRef<{ itemId: string; targetIndex: PlayerIndex } | null>(null);
+  const [cardDirectorState, setCardDirectorState] = useState(() =>
+    createCardDirectorState(unlockedCardIds),
+  );
   const [drawError, setDrawError] = useState<string | null>(null);
   const [liveMessage, setLiveMessage] = useState<string>('');
   const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
@@ -502,6 +514,7 @@ export const GameTable: React.FC<GameTableProps> = ({
       intimacyPercent,
       config: progressionConfig,
       difficultyBoost: Boolean(activeDifficultyBoost),
+      accountUnlockedCardIds: unlockedCardIds,
       preferredClothingFamily: getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType === 'catch_up'
         ? 'opponent'
         : getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType ?? null,
@@ -523,7 +536,25 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
 
-    const randomCard = selection.card;
+    let randomCard = selection.card;
+    const dueTrigger = getActiveClothingRemovalTarget(
+      dynamicClothingScheduler,
+      intimacyPercent,
+      outfitStates,
+    );
+    if (dueTrigger) {
+      currentTriggerRef.current = dueTrigger;
+      const targetName = dueTrigger.targetIndex === 0 ? player1.name : player2.name;
+      randomCard = injectClothingDirective(
+        randomCard,
+        currentPlayerIndex,
+        dueTrigger.targetIndex,
+        targetName,
+      );
+    } else {
+      currentTriggerRef.current = null;
+    }
+
     completionCommittedRef.current = false;
     setCardDirectorState((current) => recordDirectedCard(current, randomCard));
     setActiveCardWasRerolled(false);
@@ -622,6 +653,7 @@ export const GameTable: React.FC<GameTableProps> = ({
       levels: settings.levels,
       intimacyPercent,
       config: progressionConfig,
+      accountUnlockedCardIds: unlockedCardIds,
       preferredClothingFamily: getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType ?? null,
       clothingHistory: clothingJourney.history,
       firstRemoval: clothingJourney.firstRemoval,
@@ -633,7 +665,16 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
 
     const previousCardId = activeCard.id;
-    const replacement = selection.card;
+    let replacement = selection.card;
+    if (currentTriggerRef.current) {
+      const targetName = currentTriggerRef.current.targetIndex === 0 ? player1.name : player2.name;
+      replacement = injectClothingDirective(
+        replacement,
+        currentPlayerIndex,
+        currentTriggerRef.current.targetIndex,
+        targetName,
+      );
+    }
     onPlayerRewardsChange(nextRewards);
     setCardDirectorState((current) => recordDirectorStarsSpent(
       recordDirectedCard(current, replacement),
@@ -784,6 +825,20 @@ export const GameTable: React.FC<GameTableProps> = ({
           : { ...current, history: [...current.history, clothingFamily], pityCounter: 0, turnsSinceClothing: 0 };
       });
     }
+    if (currentTriggerRef.current) {
+      const trigger = currentTriggerRef.current;
+      setDynamicClothingScheduler((current) =>
+        updateDynamicClothingScheduler(
+          current,
+          trigger.itemId,
+          trigger.targetIndex,
+          'completed',
+          nextIntimacy,
+          currentRound,
+        ),
+      );
+      currentTriggerRef.current = null;
+    }
     setIntimacyGainNotice(
       `+${appliedTotal}% thân mật · +${earnedStars}★ cho ${performingPlayer.name}${appliedRemoval > 0 ? ` · gồm +${appliedRemoval}% bỏ đồ` : ''}`,
     );
@@ -859,6 +914,20 @@ export const GameTable: React.FC<GameTableProps> = ({
         ? resolveClothingOpportunity(current, opportunity.index, 'skipped')
         : { ...current, pityCounter: Math.min(5, current.pityCounter + 1) };
     });
+    if (currentTriggerRef.current) {
+      const trigger = currentTriggerRef.current;
+      setDynamicClothingScheduler((current) =>
+        updateDynamicClothingScheduler(
+          current,
+          trigger.itemId,
+          trigger.targetIndex,
+          'skipped',
+          intimacyPercent,
+          currentRound,
+        ),
+      );
+      currentTriggerRef.current = null;
+    }
     setShowPenaltyPrompt(false);
     if (performingPlayerIndex === 0) {
       onUpdatePlayers(

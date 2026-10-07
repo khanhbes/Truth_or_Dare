@@ -103,6 +103,213 @@ const handlePlayer = async (
   return errorResponse(404, 'PLAYER_ROUTE_NOT_FOUND', 'Không tìm thấy API người chơi.');
 };
 
+const COUPLE_COOKIE = 'tod_couple_id';
+
+const validCoupleId = (value: string | null): value is string =>
+  Boolean(value && /^couple-[0-9a-f-]{36}$/i.test(value));
+
+const coupleCookie = (id: string, request: Request, maxAge = 31536000): string => {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${COUPLE_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${maxAge}; HttpOnly${secure}; SameSite=Lax`;
+};
+
+const clearCoupleCookie = (request: Request): string => {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${COUPLE_COOKIE}=; Path=/; Max-Age=0; HttpOnly${secure}; SameSite=Lax`;
+};
+
+const hashPin = async (pin: string): Promise<string> => {
+  const buffer = new TextEncoder().encode(`tod-salt:${pin}`).buffer;
+  return sha256Hex(buffer);
+};
+
+const normalizeCoupleName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length >= 2 && normalized.length <= 40 ? normalized : null;
+};
+
+const normalizePin = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^[0-9]{4,8}$/.test(trimmed) ? trimmed : null;
+};
+
+const ensureCoupleTable = async (db: D1Database): Promise<void> => {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS couple_accounts (
+      id TEXT PRIMARY KEY,
+      couple_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      pin_hash TEXT NOT NULL,
+      unlocked_cards TEXT NOT NULL DEFAULT '[]',
+      total_cards_opened INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_login_at TEXT NOT NULL,
+      settings_json TEXT
+    );
+  `).run();
+};
+
+const handleCouple = async (
+  request: Request,
+  env: Parameters<AppPagesFunction>[0]['env'],
+  parts: string[],
+): Promise<Response> => {
+  await ensureCoupleTable(env.DB);
+  const now = new Date().toISOString();
+  const cookieId = readCookie(request, COUPLE_COOKIE);
+  const id = validCoupleId(cookieId) ? cookieId : null;
+
+  if (parts[1] === 'session' && request.method === 'GET') {
+    if (!id) return jsonResponse({ loggedIn: false }, { headers: { 'cache-control': 'no-store' } });
+    const account = await env.DB.prepare(
+      'SELECT id, couple_name, unlocked_cards, total_cards_opened FROM couple_accounts WHERE id = ?',
+    ).bind(id).first<{ id: string; couple_name: string; unlocked_cards: string; total_cards_opened: number }>();
+    if (!account) {
+      return jsonResponse({ loggedIn: false }, {
+        headers: { 'set-cookie': clearCoupleCookie(request), 'cache-control': 'no-store' },
+      });
+    }
+    let unlockedCardIds: string[] = [];
+    try {
+      unlockedCardIds = JSON.parse(account.unlocked_cards) || [];
+    } catch {}
+    return jsonResponse({
+      loggedIn: true,
+      coupleId: account.id,
+      coupleName: account.couple_name,
+      unlockedCardIds,
+      totalCardsOpened: account.total_cards_opened,
+    }, { headers: { 'cache-control': 'no-store' } });
+  }
+
+  if (parts[1] === 'register' && request.method === 'POST') {
+    const body = await readJson(request, 4_000);
+    if (!isRecord(body)) return errorResponse(400, 'INVALID_PAYLOAD', 'Dữ liệu không hợp lệ.');
+    const coupleName = normalizeCoupleName(body.coupleName);
+    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi phải có từ 2 đến 40 ký tự.');
+    const pin = normalizePin(body.pin);
+    if (!pin) return errorResponse(400, 'INVALID_PIN', 'Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số.');
+
+    const existing = await env.DB.prepare(
+      'SELECT id FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
+    ).bind(coupleName).first();
+    if (existing) {
+      return errorResponse(409, 'COUPLE_ALREADY_EXISTS', 'Tên cặp đôi này đã tồn tại. Hãy đăng nhập hoặc chọn tên khác.');
+    }
+
+    const coupleId = `couple-${crypto.randomUUID()}`;
+    const pinHash = await hashPin(pin);
+    const initialUnlocked: string[] = Array.isArray(body.initialUnlockedCardIds)
+      ? body.initialUnlockedCardIds.filter((item: unknown): item is string => typeof item === 'string')
+      : [];
+
+    await env.DB.prepare(
+      `INSERT INTO couple_accounts (id, couple_name, pin_hash, unlocked_cards, total_cards_opened, created_at, last_login_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(coupleId, coupleName, pinHash, JSON.stringify(initialUnlocked), initialUnlocked.length, now, now).run();
+
+    return jsonResponse({
+      loggedIn: true,
+      coupleId,
+      coupleName,
+      unlockedCardIds: initialUnlocked,
+      totalCardsOpened: initialUnlocked.length,
+    }, {
+      headers: { 'set-cookie': coupleCookie(coupleId, request), 'cache-control': 'no-store' },
+    });
+  }
+
+  if (parts[1] === 'login' && request.method === 'POST') {
+    const body = await readJson(request, 4_000);
+    if (!isRecord(body)) return errorResponse(400, 'INVALID_PAYLOAD', 'Dữ liệu không hợp lệ.');
+    const coupleName = normalizeCoupleName(body.coupleName);
+    if (!coupleName) return errorResponse(400, 'INVALID_COUPLE_NAME', 'Tên cặp đôi phải có từ 2 đến 40 ký tự.');
+    const pin = normalizePin(body.pin);
+    if (!pin) return errorResponse(400, 'INVALID_PIN', 'Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số.');
+
+    const account = await env.DB.prepare(
+      'SELECT id, couple_name, pin_hash, unlocked_cards, total_cards_opened FROM couple_accounts WHERE couple_name = ? COLLATE NOCASE',
+    ).bind(coupleName).first<{ id: string; couple_name: string; pin_hash: string; unlocked_cards: string; total_cards_opened: number }>();
+
+    if (!account) {
+      return errorResponse(401, 'INVALID_CREDENTIALS', 'Tên cặp đôi hoặc mã PIN không chính xác.');
+    }
+
+    const expectedHash = await hashPin(pin);
+    if (account.pin_hash !== expectedHash) {
+      return errorResponse(401, 'INVALID_CREDENTIALS', 'Tên cặp đôi hoặc mã PIN không chính xác.');
+    }
+
+    await env.DB.prepare(
+      'UPDATE couple_accounts SET last_login_at = ? WHERE id = ?',
+    ).bind(now, account.id).run();
+
+    let unlockedCardIds: string[] = [];
+    try {
+      unlockedCardIds = JSON.parse(account.unlocked_cards) || [];
+    } catch {}
+
+    if (Array.isArray(body.clientUnlockedCardIds) && body.clientUnlockedCardIds.length > 0) {
+      const merged = Array.from(new Set([...unlockedCardIds, ...body.clientUnlockedCardIds]));
+      if (merged.length > unlockedCardIds.length) {
+        unlockedCardIds = merged;
+        await env.DB.prepare(
+          'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ? WHERE id = ?',
+        ).bind(JSON.stringify(unlockedCardIds), unlockedCardIds.length, account.id).run();
+      }
+    }
+
+    return jsonResponse({
+      loggedIn: true,
+      coupleId: account.id,
+      coupleName: account.couple_name,
+      unlockedCardIds,
+      totalCardsOpened: unlockedCardIds.length,
+    }, {
+      headers: { 'set-cookie': coupleCookie(account.id, request), 'cache-control': 'no-store' },
+    });
+  }
+
+  if (parts[1] === 'sync-unlocked' && request.method === 'POST') {
+    if (!id) return errorResponse(401, 'COUPLE_SESSION_REQUIRED', 'Cần đăng nhập tài khoản cặp đôi.');
+    const body = await readJson(request, 100_000);
+    if (!isRecord(body) || !Array.isArray(body.unlockedCardIds)) {
+      return errorResponse(400, 'INVALID_PAYLOAD', 'Danh sách thẻ không hợp lệ.');
+    }
+    const incomingCardIds = body.unlockedCardIds.filter((item): item is string => typeof item === 'string' && item.length > 0);
+
+    const account = await env.DB.prepare(
+      'SELECT unlocked_cards FROM couple_accounts WHERE id = ?',
+    ).bind(id).first<{ unlocked_cards: string }>();
+    if (!account) return errorResponse(401, 'COUPLE_SESSION_REQUIRED', 'Tài khoản không còn hiệu lực.');
+
+    let currentCardIds: string[] = [];
+    try {
+      currentCardIds = JSON.parse(account.unlocked_cards) || [];
+    } catch {}
+
+    const unionIds = Array.from(new Set([...currentCardIds, ...incomingCardIds]));
+    await env.DB.prepare(
+      'UPDATE couple_accounts SET unlocked_cards = ?, total_cards_opened = ?, last_login_at = ? WHERE id = ?',
+    ).bind(JSON.stringify(unionIds), unionIds.length, now, id).run();
+
+    return jsonResponse({
+      success: true,
+      unlockedCardIds: unionIds,
+      totalCardsOpened: unionIds.length,
+    }, { headers: { 'cache-control': 'no-store' } });
+  }
+
+  if (parts[1] === 'logout' && request.method === 'POST') {
+    return jsonResponse({ loggedIn: false }, {
+      headers: { 'set-cookie': clearCoupleCookie(request), 'cache-control': 'no-store' },
+    });
+  }
+
+  return errorResponse(404, 'COUPLE_ROUTE_NOT_FOUND', 'Không tìm thấy API cặp đôi.');
+};
+
 const handleCatalog = async (request: Request, env: Parameters<AppPagesFunction>[0]['env']): Promise<Response> => {
   try {
     const catalog = await readCatalog(env);
@@ -442,6 +649,7 @@ export const onRequest: AppPagesFunction = async ({ request, env }) => {
       return handleAsset(request, env, decodeURIComponent(parts[1]));
     }
     if (parts[0] === 'player') return handlePlayer(request, env, parts);
+    if (parts[0] === 'couple') return handleCouple(request, env, parts);
     if (parts[0] === 'admin') return handleAdmin(request, env, parts);
     return errorResponse(404, 'API_ROUTE_NOT_FOUND', 'Không tìm thấy API.');
   } catch (error) {

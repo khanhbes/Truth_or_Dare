@@ -44,9 +44,18 @@ import {
   getPlayerSession,
   heartbeatPlayer,
   loginPlayer,
+  logoutPlayer,
   type AdminPlayerStats,
   type PlayerSession,
 } from './utils/playerSession';
+import {
+  getCoupleSession,
+  loginCouple,
+  logoutCouple,
+  registerCouple,
+  syncCoupleUnlockedCards,
+  type CoupleSession,
+} from './utils/coupleSession';
 import { parseStoredCards, type CatalogPayload } from './utils/cardSchema';
 import {
   catalogCache,
@@ -130,6 +139,7 @@ export default function App() {
   const [playerSession, setPlayerSession] = useState<PlayerSession | null>(
     appMode === 'developer' ? { loggedIn: true } : null,
   );
+  const [coupleSession, setCoupleSession] = useState<CoupleSession | null>(null);
   const [playerSessionError, setPlayerSessionError] = useState<string | null>(null);
   const [adminPlayerStats, setAdminPlayerStats] = useState<AdminPlayerStats | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -226,12 +236,26 @@ export default function App() {
   useEffect(() => {
     if (appMode === 'developer') return;
     let active = true;
-    void getPlayerSession().then((session) => {
-      if (active) setPlayerSession(session);
+    void Promise.all([
+      getCoupleSession().catch(() => ({ loggedIn: false } as CoupleSession)),
+      getPlayerSession().catch(() => ({ loggedIn: false } as PlayerSession)),
+    ]).then(([cSession, pSession]) => {
+      if (!active) return;
+      if (cSession.loggedIn) {
+        setCoupleSession(cSession);
+        setPlayerSession({ loggedIn: true, displayName: cSession.coupleName });
+        if (Array.isArray(cSession.unlockedCardIds) && cSession.unlockedCardIds.length > 0) {
+          setUnlockedCardIds((current) => Array.from(new Set([...current, ...cSession.unlockedCardIds!])));
+        }
+      } else if (pSession.loggedIn) {
+        setPlayerSession(pSession);
+      } else {
+        setPlayerSession({ loggedIn: false });
+      }
     }).catch((error) => {
       if (!active) return;
       setPlayerSession({ loggedIn: false });
-      setPlayerSessionError(error instanceof Error ? error.message : 'Không thể kiểm tra phiên người chơi.');
+      setPlayerSessionError(error instanceof Error ? error.message : 'Không thể kiểm tra phiên đăng nhập.');
     });
     return () => { active = false; };
   }, [appMode]);
@@ -587,7 +611,14 @@ export default function App() {
   };
 
   const handleUnlockCard = (cardId: string) => {
-    setUnlockedCardIds((current) => current.includes(cardId) ? current : [...current, cardId]);
+    setUnlockedCardIds((current) => {
+      if (current.includes(cardId)) return current;
+      const next = [...current, cardId];
+      if (coupleSession?.loggedIn) {
+        void syncCoupleUnlockedCards(next);
+      }
+      return next;
+    });
   };
 
   const handleDeleteCard = (card: CardItem) => {
@@ -852,6 +883,14 @@ export default function App() {
     setScreen('intro');
   };
 
+  const handleLogout = async () => {
+    await logoutCouple();
+    await logoutPlayer().catch(() => undefined);
+    setCoupleSession(null);
+    setPlayerSession({ loggedIn: false });
+    setScreen('intro');
+  };
+
   const keepGameMounted = screen === 'game' || (screen === 'collection' && collectionReturnScreen === 'game');
 
   if (appMode === 'player' && playerSession === null) {
@@ -871,6 +910,21 @@ export default function App() {
           setPlayerSession(session);
           setPlayerSessionError(null);
         }}
+        onCoupleLogin={async (coupleName, pin) => {
+          const session = await loginCouple(coupleName, pin, unlockedCardIds);
+          setCoupleSession(session);
+          setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+          if (Array.isArray(session.unlockedCardIds) && session.unlockedCardIds.length > 0) {
+            setUnlockedCardIds((current) => Array.from(new Set([...current, ...session.unlockedCardIds!])));
+          }
+          setPlayerSessionError(null);
+        }}
+        onCoupleRegister={async (coupleName, pin) => {
+          const session = await registerCouple(coupleName, pin, unlockedCardIds);
+          setCoupleSession(session);
+          setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+          setPlayerSessionError(null);
+        }}
       />
     );
   }
@@ -885,6 +939,9 @@ export default function App() {
         {screen === 'intro' && (
           <IntroScreen
             mode={appMode}
+            coupleName={coupleSession?.coupleName}
+            unlockedCount={unlockedCardIds.length}
+            onLogout={handleLogout}
             onStart={() => appMode === 'developer' ? openCollection('intro') : setScreen('setup')}
             onOpenCollection={() => openCollection('intro')}
             onOpenRules={() => setShowRules(true)}
