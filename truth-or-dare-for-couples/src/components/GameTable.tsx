@@ -24,6 +24,8 @@ import {
   Shuffle,
   TrendingUp,
   ShieldCheck,
+  Flag,
+  Info,
 } from 'lucide-react';
 import {
   CardItem,
@@ -65,7 +67,7 @@ import {
   removeGarmentsFromBoth,
   swapGarments,
 } from '../utils/wardrobe';
-import { resolveCardTimerSeconds } from '../utils/cardTimer';
+import { requiresTimerStartBeforeCompletion, resolveCardTimerSeconds } from '../utils/cardTimer';
 import {
   advanceClothingTurn,
   clothingEffectFamily,
@@ -74,9 +76,11 @@ import {
   resolveClothingOpportunity,
 } from '../utils/clothingJourney';
 import {
+  consumeScheduledRemoval,
   createDynamicClothingSchedule,
   getActiveClothingRemovalTarget,
   injectClothingDirective,
+  shouldInjectClothingDirective,
   updateDynamicClothingScheduler,
 } from '../utils/dynamicClothingScheduler';
 import {
@@ -86,10 +90,14 @@ import {
 } from '../utils/cardDirector';
 import {
   DIFFICULTY_BOOST_STAR_COST,
+  FINAL_FLIP_THREE_STAR_COST,
+  FINAL_FLIP_TWO_STAR_COST,
   REROLL_STAR_COST,
   awardStars,
+  getSharedStarBalance,
   refundPendingDifficultyBoost,
   spendReward,
+  spendSharedStars,
 } from '../utils/rewards';
 import {
   DIFFICULTY_STARS,
@@ -176,12 +184,28 @@ const AUDIENCE_LABELS = {
 } as const;
 const POSITION_RECIPIENT_LABELS = { male: 'Lượt Nam', female: 'Lượt Nữ', both: 'Cả hai lượt' } as const;
 const POSITION_FAMILY_LABELS = {
-  oral: 'Oral sex',
-  blowjob: 'Blow',
+  oral: 'Oral cùng nhau',
+  blowjob: 'Oral',
   handjob: 'Hand',
   have_sex: 'Have sex',
   other: 'Tư thế khác',
 } as const;
+
+/** Intimacy level below which skipping never asks for a garment as penalty. */
+const PENALTY_GARMENT_MIN_PERCENT = 20;
+
+type FinalChoiceState = {
+  candidates: CardItem[];
+  /** How many cards the couple may reveal before choosing (1 = blind pick). */
+  flips: 1 | 2 | 3;
+  revealedIds: string[];
+};
+
+const finalCardTitle = (card: CardItem): string => {
+  const hint = card.hint?.split('·')[0]?.trim();
+  if (hint) return hint;
+  return card.content.length > 70 ? `${card.content.slice(0, 67).trim()}…` : card.content;
+};
 
 const getPositionFamilyLabel = (card: CardItem) =>
   card.position?.family === 'other'
@@ -305,6 +329,8 @@ export const GameTable: React.FC<GameTableProps> = ({
   } | null>(null);
   const [showSwapDialog, setShowSwapDialog] = useState(false);
   const [showDualRemovalDialog, setShowDualRemovalDialog] = useState(false);
+  const [finalChoice, setFinalChoice] = useState<FinalChoiceState | null>(null);
+  const [showOddsDetails, setShowOddsDetails] = useState(false);
 
   // Card draw state machine
   const [drawState, setDrawState] = useState<
@@ -340,6 +366,12 @@ export const GameTable: React.FC<GameTableProps> = ({
   const activeDifficultyBoost = pendingDifficultyBoosts.find(
     (boost) => boost.targetPlayerIndex === currentPlayerIndex,
   ) ?? null;
+  const activeClothingOpportunity = getActiveOpportunity(clothingJourney, intimacyPercent);
+  const preferredClothingFamily = activeClothingOpportunity?.eventType === 'catch_up'
+    ? 'opponent' as const
+    : activeClothingOpportunity?.eventType ?? null;
+  // The SAME options feed the on-screen odds and the real draw, so the
+  // displayed percentages are exactly the ones the selector uses.
   const journeySelectionOptions = useMemo(() => ({
     cards: availableCards,
     actorIndex: currentPlayerIndex,
@@ -349,19 +381,34 @@ export const GameTable: React.FC<GameTableProps> = ({
     intimacyPercent,
     config: progressionConfig,
     difficultyBoost: Boolean(activeDifficultyBoost),
+    accountUnlockedCardIds: unlockedCardIds,
+    preferredClothingFamily,
+    clothingHistory: clothingJourney.history,
+    firstRemoval: clothingJourney.firstRemoval,
     directorState: cardDirectorState,
   }), [
     availableCards, currentPlayerIndex, outfitStates, usedCardIds,
-    settings.levels, intimacyPercent, progressionConfig, activeDifficultyBoost, cardDirectorState,
+    settings.levels, intimacyPercent, progressionConfig, activeDifficultyBoost,
+    unlockedCardIds, preferredClothingFamily, clothingJourney, cardDirectorState,
   ]);
+  const dueClothingTrigger = useMemo(
+    () => getActiveClothingRemovalTarget(dynamicClothingScheduler, intimacyPercent, outfitStates),
+    [dynamicClothingScheduler, intimacyPercent, outfitStates],
+  );
   const drawAnalysis = useMemo(
     () => getJourneyDrawAnalysis(journeySelectionOptions),
     [journeySelectionOptions],
   );
+  // A due garment removal makes the random draw prefer a Dare; show those odds.
+  const displayedDrawAnalysis = useMemo(() => {
+    if (!dueClothingTrigger || settings.drawMode === 'choose') return drawAnalysis;
+    const dareAnalysis = getJourneyDrawAnalysis({ ...journeySelectionOptions, preferredType: 'dare' });
+    return dareAnalysis.candidates.length > 0 ? dareAnalysis : drawAnalysis;
+  }, [dueClothingTrigger, settings.drawMode, drawAnalysis, journeySelectionOptions]);
   const availableDrawTypes = drawAnalysis.availableTypes;
   const drawProbabilities = drawProbabilitySnapshot?.deck === 'standard'
     ? drawProbabilitySnapshot.probabilities
-    : drawAnalysis.probabilities;
+    : displayedDrawAnalysis.probabilities;
   const currentLuxuryProbabilities = useMemo(
     () =>
       journeyPhase === 'position' || journeyPhase === 'position_consent'
@@ -509,24 +556,15 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const executeDrawCard = (preferredType: CardType | null) => {
-    const selection = selectJourneyCard({
-      cards: availableCards,
-      preferredType,
-      actorIndex: currentPlayerIndex,
-      outfits: outfitStates,
-      usedCardIds,
-      levels: settings.levels,
-      intimacyPercent,
-      config: progressionConfig,
-      difficultyBoost: Boolean(activeDifficultyBoost),
-      accountUnlockedCardIds: unlockedCardIds,
-      preferredClothingFamily: getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType === 'catch_up'
-        ? 'opponent'
-        : getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType ?? null,
-      clothingHistory: clothingJourney.history,
-      firstRemoval: clothingJourney.firstRemoval,
-      directorState: cardDirectorState,
-    });
+    // A due clothing milestone prefers a Dare so the removal is attached to an action, never to a Truth.
+    const dueTrigger = dueClothingTrigger;
+    const selectionOptions = journeySelectionOptions;
+    const dareFirst = dueTrigger && !preferredType
+      ? selectJourneyCard({ ...selectionOptions, preferredType: 'dare' })
+      : null;
+    const selection = dareFirst?.card
+      ? dareFirst
+      : selectJourneyCard({ ...selectionOptions, preferredType });
 
     if (!selection.card) {
       setDrawError(selection.errorCode === 'no_progress_gain'
@@ -542,19 +580,12 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
 
     let randomCard = selection.card;
-    const dueTrigger = getActiveClothingRemovalTarget(
-      dynamicClothingScheduler,
-      intimacyPercent,
-      outfitStates,
-    );
-    if (dueTrigger) {
+    if (dueTrigger && shouldInjectClothingDirective(randomCard)) {
       currentTriggerRef.current = dueTrigger;
-      const targetName = dueTrigger.targetIndex === 0 ? player1.name : player2.name;
       randomCard = injectClothingDirective(
         randomCard,
         currentPlayerIndex,
         dueTrigger.targetIndex,
-        targetName,
       );
     } else {
       currentTriggerRef.current = null;
@@ -649,20 +680,10 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
     const selection = selectJourneyCard({
-      cards: availableCards,
+      ...journeySelectionOptions,
       preferredType: settings.drawMode === 'choose' ? activeCard.type : null,
-      actorIndex: currentPlayerIndex,
-      outfits: outfitStates,
-      usedCardIds,
       excludedCardIds: [activeCard.id],
-      levels: settings.levels,
-      intimacyPercent,
-      config: progressionConfig,
-      accountUnlockedCardIds: unlockedCardIds,
-      preferredClothingFamily: getActiveOpportunity(clothingJourney, intimacyPercent)?.eventType ?? null,
-      clothingHistory: clothingJourney.history,
-      firstRemoval: clothingJourney.firstRemoval,
-      directorState: cardDirectorState,
+      difficultyBoost: false,
     });
     if (!selection.card) {
       setDrawError('Không còn lá khác phù hợp để đổi. Sao của bạn được giữ nguyên.');
@@ -670,15 +691,14 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
 
     const previousCardId = activeCard.id;
-    let replacement = selection.card;
+    const replacement = selection.card;
     if (currentTriggerRef.current) {
-      const targetName = currentTriggerRef.current.targetIndex === 0 ? player1.name : player2.name;
-      replacement = injectClothingDirective(
-        replacement,
-        currentPlayerIndex,
-        currentTriggerRef.current.targetIndex,
-        targetName,
+      // Rerolling a clothing card does not force the replacement to be one; the milestone returns a bit later.
+      const trigger = currentTriggerRef.current;
+      setDynamicClothingScheduler((current) =>
+        updateDynamicClothingScheduler(current, trigger.itemId, trigger.targetIndex, 'skipped', intimacyPercent, currentRound),
       );
+      currentTriggerRef.current = null;
     }
     onPlayerRewardsChange(nextRewards);
     setCardDirectorState((current) => recordDirectorStarsSpent(
@@ -754,7 +774,10 @@ export const GameTable: React.FC<GameTableProps> = ({
     timestamp: Date.now(),
   });
 
-  const finalizeCompletedTurn = (includeCardRemovalBonus = false) => {
+  const finalizeCompletedTurn = (
+    includeCardRemovalBonus = false,
+    outfitsAfter: readonly [OutfitState, OutfitState] = outfitStates,
+  ) => {
     if (!activeCard || completionCommittedRef.current) return;
     completionCommittedRef.current = true;
     recordResolution(activeCard, 'completed');
@@ -858,7 +881,9 @@ export const GameTable: React.FC<GameTableProps> = ({
         completedCount: player2.completedCount + 1,
       });
     }
-    if (nextIntimacy >= 100 && outfitStates.every((outfit) => getOutfitStage(outfit) !== 'dressed')) {
+    // Every garment must come off through the cards themselves: the Position
+    // deck opens only once Tim Hồng is full AND both outfits are empty.
+    if (nextIntimacy >= 100 && outfitsAfter.every((outfit) => getOutfitStage(outfit) === 'empty')) {
       soundEngine.stopTimerAlarm();
       setIsTimerRunning(false);
       setTimerSeconds(null);
@@ -870,7 +895,7 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
     if (nextIntimacy >= 100) {
-      setLiveMessage('Tim hồng đã đầy. Tiếp tục Standard để cả hai đạt trạng thái phù hợp cho Bộ Tư thế.');
+      setLiveMessage('Tim hồng đã đầy. Tiếp tục rút bài để cả hai cởi nốt trang phục rồi mở Bộ Tư thế.');
     }
     advanceNextTurn();
   };
@@ -904,12 +929,15 @@ export const GameTable: React.FC<GameTableProps> = ({
     advanceNextTurn();
   };
 
-  const finalizeCardCompletion = (includeCardRemovalBonus = false) => {
+  const finalizeCardCompletion = (
+    includeCardRemovalBonus = false,
+    outfitsAfter?: readonly [OutfitState, OutfitState],
+  ) => {
     if (activeCard && getCardDeck(activeCard) === 'position') finalizeCompletedPosition();
-    else finalizeCompletedTurn(includeCardRemovalBonus);
+    else finalizeCompletedTurn(includeCardRemovalBonus, outfitsAfter);
   };
 
-  const finalizeSkippedTurn = () => {
+  const finalizeSkippedTurn = (outfitsAfter: readonly [OutfitState, OutfitState] = outfitStates) => {
     if (completionCommittedRef.current) return;
     completionCommittedRef.current = true;
     if (activeCard) recordResolution(activeCard, 'skipped');
@@ -945,13 +973,24 @@ export const GameTable: React.FC<GameTableProps> = ({
         skippedCount: player2.skippedCount + 1,
       });
     }
+    if (intimacyPercent >= 100 && outfitsAfter.every((outfit) => getOutfitStage(outfit) === 'empty')) {
+      soundEngine.stopTimerAlarm();
+      setIsTimerRunning(false);
+      setTimerSeconds(null);
+      setActiveCard(null);
+      setDrawState('idle');
+      setCardFlipped(false);
+      setIsRevealed(true);
+      onJourneyPhaseChange('position_consent');
+      return;
+    }
     advanceNextTurn();
   };
 
   // Action: Complete Challenge
   const handleComplete = () => {
     if (!activeCard || completionCommittedRef.current) return;
-    if (timerSeconds !== null && !hasTimerStarted && activeCard.position?.family !== 'have_sex') {
+    if (timerSeconds !== null && !hasTimerStarted && requiresTimerStartBeforeCompletion(activeCard)) {
       setLiveMessage('Hãy bấm Bắt đầu thực hiện trước khi xác nhận kết quả.');
       return;
     }
@@ -997,10 +1036,6 @@ export const GameTable: React.FC<GameTableProps> = ({
   // Action: Skip Challenge
   const handleSkip = () => {
     if (!activeCard || completionCommittedRef.current) return;
-    if (timerSeconds !== null && !hasTimerStarted) {
-      setLiveMessage('Hãy bấm Bắt đầu thực hiện trước khi chọn không hoàn thành.');
-      return;
-    }
     soundEngine.playTick();
     soundEngine.stopTimerAlarm();
     setIsTimerRunning(false);
@@ -1050,9 +1085,14 @@ export const GameTable: React.FC<GameTableProps> = ({
     });
 
     const source = removalRequest.source;
+    const consumesSchedule = source === 'penalty' || (source === 'card' && !currentTriggerRef.current);
+    if (consumesSchedule) {
+      const targetIndex = removalRequest.targetIndex;
+      setDynamicClothingScheduler((current) => consumeScheduledRemoval(current, targetIndex));
+    }
     setRemovalRequest(null);
-    if (source === 'card') finalizeCardCompletion(true);
-    else if (source === 'penalty') finalizeSkippedTurn();
+    if (source === 'card') finalizeCardCompletion(true, nextOutfits);
+    else if (source === 'penalty') finalizeSkippedTurn(nextOutfits);
   };
 
   const handleContinueWithoutRemoval = () => {
@@ -1088,8 +1128,11 @@ export const GameTable: React.FC<GameTableProps> = ({
       });
     });
     setShowDualRemovalDialog(false);
+    // Fixed "both" cards never carry an injected trigger, so each removal
+    // consumes the next pending scheduled item of its player.
+    setDynamicClothingScheduler((current) => consumeScheduledRemoval(consumeScheduledRemoval(current, 0), 1));
     setLiveMessage(`${player1.name} và ${player2.name} mỗi người đã bỏ một món. Trang phục được cập nhật cùng lúc.`);
-    finalizeCardCompletion(true);
+    finalizeCardCompletion(true, result.outfits);
   };
 
   const handleConfirmSwap = (firstSlot: GarmentSlot, secondSlot: GarmentSlot) => {
@@ -1134,7 +1177,7 @@ export const GameTable: React.FC<GameTableProps> = ({
     });
     setShowSwapDialog(false);
     setLiveMessage(`${player1.name} và ${player2.name} đã đổi ${GARMENT_LABELS[firstSlot].toLocaleLowerCase('vi')} với ${GARMENT_LABELS[secondSlot].toLocaleLowerCase('vi')}.`);
-    finalizeCardCompletion(true);
+    finalizeCardCompletion(true, result.outfits);
   };
 
   const advanceNextTurn = () => {
@@ -1160,7 +1203,7 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const handlePositionDraw = () => {
-    if ((journeyPhase !== 'position' && journeyPhase !== 'final') || drawState !== 'idle') return;
+    if ((journeyPhase !== 'position' && journeyPhase !== 'final') || drawState !== 'idle' || finalChoice) return;
     const selection = selectLuxuryPositionCard({
       cards: availableCards,
       actorIndex: currentPlayerIndex,
@@ -1168,7 +1211,17 @@ export const GameTable: React.FC<GameTableProps> = ({
       usedCardIds: sessionPositionCardIds,
       luxuryPercent: luxuryIntimacyPercent,
       config: luxuryProgressionConfig,
+      accountUnlockedCardIds: unlockedCardIds,
     });
+    if (selection.finalCandidates && selection.finalCandidates.length > 0) {
+      soundEngine.playShuffle();
+      setDrawError(null);
+      setDrawProbabilitySnapshot({ deck: 'position', probabilities: selection.probabilities });
+      setFinalChoice({ candidates: selection.finalCandidates, flips: 1, revealedIds: [] });
+      onJourneyPhaseChange('final');
+      setLiveMessage(`Lá cuối đã tới: chọn 1 trong ${selection.finalCandidates.length} lá Have Sex đang úp.`);
+      return;
+    }
     const nextCard = selection.card;
     if (!nextCard) {
       setActiveCard(null);
@@ -1211,6 +1264,73 @@ export const GameTable: React.FC<GameTableProps> = ({
     }, shouldReduceMotion ? 100 : 750);
   };
 
+  const sharedStarBalance = getSharedStarBalance(playerRewards);
+  const finalFlipCost = (flips: 2 | 3, current: FinalChoiceState['flips']): number => (
+    flips === 3
+      ? current === 2 ? FINAL_FLIP_THREE_STAR_COST - FINAL_FLIP_TWO_STAR_COST : FINAL_FLIP_THREE_STAR_COST
+      : FINAL_FLIP_TWO_STAR_COST
+  );
+
+  const chooseFinalCard = (card: CardItem) => {
+    setFinalChoice(null);
+    completionCommittedRef.current = false;
+    soundEngine.playCardFlip();
+    setActiveCard(card);
+    setIsRevealed(true);
+    setCardFlipped(true);
+    setDrawState('drawn');
+    setTimerSeconds(null);
+    setHasTimerStarted(false);
+    setIsTimerRunning(false);
+    setDrawError(null);
+    onDrawPositionCard(card.id);
+    onOpenPositionCard(card.id);
+    setLiveMessage('Hai bạn đã chọn lá cuối.');
+  };
+
+  const handleBuyFinalFlips = (flips: 2 | 3) => {
+    if (!finalChoice || finalChoice.flips >= flips || finalChoice.candidates.length < flips) return;
+    const cost = finalFlipCost(flips, finalChoice.flips);
+    const spend = spendSharedStars(playerRewards, currentPlayerIndex, cost);
+    if (!spend) {
+      setDrawError(`Ví chung cần ${cost}★ để lật thêm lá.`);
+      return;
+    }
+    onPlayerRewardsChange(spend.rewards);
+    const now = Date.now();
+    spend.paid.forEach((amount, index) => {
+      if (amount > 0) {
+        onAddRewardEvent({
+          kind: 'final_card_flips',
+          playerIndex: index as PlayerIndex,
+          amount: -amount,
+          round: currentRound,
+          timestamp: now,
+        });
+      }
+    });
+    setCardDirectorState((current) => recordDirectorStarsSpent(current, cost));
+    setDrawError(null);
+    soundEngine.playCardFlip();
+    setFinalChoice({
+      ...finalChoice,
+      flips,
+      revealedIds: flips === 3 ? finalChoice.candidates.map((card) => card.id) : finalChoice.revealedIds,
+    });
+    setLiveMessage(flips === 3 ? 'Đã lật cả 3 lá. Hãy chọn 1 lá.' : 'Hai bạn được lật 2 lá rồi chọn 1.');
+  };
+
+  const handleFinalCardTap = (card: CardItem) => {
+    if (!finalChoice) return;
+    if (finalChoice.flips === 1) {
+      chooseFinalCard(card);
+      return;
+    }
+    if (finalChoice.revealedIds.includes(card.id) || finalChoice.revealedIds.length >= finalChoice.flips) return;
+    soundEngine.playCardFlip();
+    setFinalChoice({ ...finalChoice, revealedIds: [...finalChoice.revealedIds, card.id] });
+  };
+
   const handleEnterPositionJourney = () => {
     if (outfitStates.some((outfit) => getOutfitStage(outfit) === 'dressed')) {
       setLiveMessage('Cả hai cần ít nhất đạt trạng thái chỉ còn đồ lót trước khi vào Bộ Tư thế.');
@@ -1230,10 +1350,6 @@ export const GameTable: React.FC<GameTableProps> = ({
 
   const handlePositionAdvance = (completed: boolean) => {
     if (!activeCard || completionCommittedRef.current) return;
-    if (timerSeconds !== null && !hasTimerStarted) {
-      setLiveMessage('Hãy bấm Bắt đầu thực hiện trước khi xác nhận kết quả.');
-      return;
-    }
     if (completed) {
       handleComplete();
       return;
@@ -1278,7 +1394,31 @@ export const GameTable: React.FC<GameTableProps> = ({
         ? 'Chọn 2 món để cùng bỏ'
         : `Chọn 1 món của ${removalTargetIndices[0] === 0 ? player1.name : player2.name}`
       : 'Đã hoàn thành';
+  const heatLevel = (() => {
+    if (journeyPhase === 'standard') {
+      const expected = DIFFICULTY_STARS.reduce((sum, star) => sum + star * drawProbabilities.stars[star], 0);
+      return Math.min(5, Math.max(1, Math.round(expected || 1)));
+    }
+    const stars = luxuryDrawProbabilities?.stars;
+    const total = stars ? POSITION_DIFFICULTY_STARS.reduce((sum, star) => sum + stars[star], 0) : 0;
+    if (!stars || total <= 0) return 5;
+    const expected = POSITION_DIFFICULTY_STARS.reduce((sum, star) => sum + star * stars[star], 0) / total;
+    return Math.min(5, Math.max(1, Math.round(expected - 5)));
+  })();
+  const clothingBanner = (() => {
+    const effect = activeCard?.clothingEffect;
+    if (!activeCard || !effect || getCardDeck(activeCard) === 'position') return null;
+    if (effect.kind === 'swap_garments') return 'Kèm theo: hai bạn đổi cho nhau 1 món đồ';
+    const targets = getRemovalTargetIndices(activeCard, currentPlayerIndex);
+    if (targets.length === 2) return 'Kèm theo: mỗi người cởi 1 món đồ';
+    if (targets.length === 0) return null;
+    if (targets[0] === currentPlayerIndex) return `Kèm theo: ${currentPlayer.name} tự cởi 1 món đồ`;
+    return `Kèm theo: cởi 1 món đồ của ${targets[0] === 0 ? player1.name : player2.name}`;
+  })();
   const canApplyPenaltyGarment = getRemovableGarments(outfitStates[performingPlayerIndex]).length > 0;
+  const penaltyLockedReason = intimacyPercent < PENALTY_GARMENT_MIN_PERCENT
+    ? `Trước mốc ${PENALTY_GARMENT_MIN_PERCENT}% Tim Hồng, bỏ qua không bị cởi đồ. Hai bạn có thể chọn một hình phạt nhẹ như một nụ hôn hoặc một câu hỏi thay thế.`
+    : undefined;
 
   return (
     <div className="relative z-10 max-w-7xl mx-auto px-4 py-4 min-h-[92vh] flex flex-col justify-between">
@@ -1370,6 +1510,20 @@ export const GameTable: React.FC<GameTableProps> = ({
             <span className="hidden sm:inline">Thống kê</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Kết thúc ván ngay bây giờ? Hai bạn sẽ xem tổng kết của ván này.')) onFinishGame('manual');
+            }}
+            disabled={navigationLocked}
+            aria-label="Kết thúc ván"
+            title="Kết thúc ván"
+            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-neutral-300 hover:text-white transition-all text-xs disabled:opacity-40"
+          >
+            <Flag className="w-4 h-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Kết thúc</span>
+          </button>
+
           {onOpenAccountModal && (
             <button
               type="button"
@@ -1435,44 +1589,64 @@ export const GameTable: React.FC<GameTableProps> = ({
       </section>
 
       <section
-        aria-label="Tỉ lệ xuất hiện thẻ ở lượt hiện tại"
-        className="mt-3 grid gap-2 border-b border-white/[0.07] px-1 pb-3 text-[10px] text-neutral-400 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-4 sm:text-xs"
+        aria-label="Độ nóng của lượt hiện tại"
+        className="mt-3 border-b border-white/[0.07] px-1 pb-3 text-[10px] text-neutral-400 sm:text-xs"
       >
-        <div className="flex items-center gap-2 font-semibold text-neutral-300">
-          <Percent className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
-          <span>{drawProbabilitySnapshot ? 'Tỉ lệ lúc rút' : 'Tỉ lệ lượt này'}</span>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+          <div className="flex items-center gap-2 font-semibold text-neutral-300">
+            <Flame className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+            <span>{drawProbabilitySnapshot ? 'Độ nóng lúc rút' : 'Độ nóng lượt này'}</span>
+            <span className="flex items-center gap-1" role="img" aria-label={`Độ nóng ${heatLevel} trên 5`}>
+              {[1, 2, 3, 4, 5].map((pip) => (
+                <span
+                  key={pip}
+                  className={`h-1.5 w-4 rounded-full ${pip <= heatLevel ? 'bg-gradient-to-r from-amber-300 to-rose-400' : 'bg-white/10'}`}
+                />
+              ))}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {journeyPhase === 'standard' ? (
+              <>
+                {activeDifficultyBoost && (
+                  <span className="rounded-full border border-orange-300/30 bg-orange-500/10 px-2 py-0.5 font-bold text-orange-200">
+                    Tăng khó +1 bậc
+                  </span>
+                )}
+                <span>Sự thật <strong className="text-blue-200">{chance(drawProbabilities.types.truth)}</strong></span>
+                <span>Thử thách <strong className="text-rose-200">{chance(drawProbabilities.types.dare)}</strong></span>
+              </>
+            ) : (
+              <span className={`rounded-full border border-[#e8a48c]/25 bg-[#e8a48c]/10 px-2 py-0.5 text-xs font-bold text-[#f4e8ff] ${(luxuryDrawProbabilities?.finalCardChance ?? 0) <= 0 ? 'opacity-35' : ''}`}>
+                Have Sex <strong>{chance(luxuryDrawProbabilities?.finalCardChance ?? 0)}</strong>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowOddsDetails((value) => !value)}
+              aria-expanded={showOddsDetails}
+              className="flex h-8 items-center gap-1 rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-white/25 hover:text-white"
+            >
+              <Info className="h-3 w-3" aria-hidden="true" />
+              {showOddsDetails ? 'Ẩn tỉ lệ' : 'Tỉ lệ sao'}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
-          {journeyPhase === 'standard' ? (
-            <>
-              {activeDifficultyBoost && (
-                <span className="rounded-full border border-orange-300/30 bg-orange-500/10 px-2 py-0.5 font-bold text-orange-200">
-                  Tăng khó +1 bậc
-                </span>
-              )}
-              <span>Sự thật <strong className="text-blue-200">{chance(drawProbabilities.types.truth)}</strong></span>
-              <span>Thử thách <strong className="text-rose-200">{chance(drawProbabilities.types.dare)}</strong></span>
-              <span aria-hidden="true" className="hidden text-white/15 sm:inline">|</span>
-              {DIFFICULTY_STARS.map((star) => (
+        {showOddsDetails && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
+            {journeyPhase === 'standard'
+              ? DIFFICULTY_STARS.map((star) => (
                 <span key={star} className={`text-xs font-semibold ${drawProbabilities.stars[star] <= 0 ? 'opacity-35' : ''}`}>
                   {star}★ <strong className="text-amber-200">{chance(drawProbabilities.stars[star])}</strong>
                 </span>
-              ))}
-            </>
-          ) : (
-            <>
-              <span className={`rounded-full border border-[#e8a48c]/25 bg-[#e8a48c]/10 px-2 py-0.5 text-xs font-bold text-[#f4e8ff] ${luxuryDrawProbabilities.finalCardChance <= 0 ? 'opacity-35' : ''}`}>
-                Have Sex <strong>{chance(luxuryDrawProbabilities.finalCardChance)}</strong>
-              </span>
-              <span aria-hidden="true" className="hidden text-white/15 sm:inline">|</span>
-              {POSITION_DIFFICULTY_STARS.map((star) => (
-                <span key={star} className={`text-xs font-semibold ${luxuryDrawProbabilities.stars[star] <= 0 ? 'opacity-25' : ''}`}>
-                  {star}★ <strong className="text-[#ead2ff]">{chance(luxuryDrawProbabilities.stars[star])}</strong>
+              ))
+              : POSITION_DIFFICULTY_STARS.map((star) => (
+                <span key={star} className={`text-xs font-semibold ${(luxuryDrawProbabilities?.stars[star] ?? 0) <= 0 ? 'opacity-25' : ''}`}>
+                  {star}★ <strong className="text-[#ead2ff]">{chance(luxuryDrawProbabilities?.stars[star] ?? 0)}</strong>
                 </span>
               ))}
-            </>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       <p className="sr-only" aria-live="polite" aria-atomic="true">
@@ -1571,7 +1745,109 @@ export const GameTable: React.FC<GameTableProps> = ({
           </motion.section>
         )}
 
-        {(journeyPhase === 'position' || journeyPhase === 'final') && !activeCard && drawState === 'idle' && drawError && (
+        {(journeyPhase === 'position' || journeyPhase === 'final') && finalChoice && (
+          <motion.section
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="w-full max-w-2xl text-center"
+            aria-labelledby="final-choice-title"
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#e2c275]/75">Lá cuối · Have Sex</p>
+            <h2 id="final-choice-title" className="mt-2 font-serif-romantic text-2xl font-bold text-[#fff4d6] sm:text-3xl">
+              {finalChoice.flips === 1
+                ? `Chọn 1 trong ${finalChoice.candidates.length} lá đang úp`
+                : finalChoice.flips === 2
+                  ? 'Lật 2 lá rồi chọn 1'
+                  : 'Chọn 1 trong 3 lá đã lật'}
+            </h2>
+            <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-300">
+              {finalChoice.flips === 1
+                ? 'Chạm vào một lá úp: lá đó là lá cuối của hai bạn. Muốn xem trước, hãy dùng sao trong ví chung để lật.'
+                : finalChoice.flips === 2 && finalChoice.revealedIds.length < 2
+                  ? `Chạm để lật thêm ${2 - finalChoice.revealedIds.length} lá, rồi bấm "Chọn lá này" dưới lá hai bạn muốn.`
+                  : finalChoice.flips === 2
+                    ? 'Đã lật 2 lá. Bấm "Chọn lá này" dưới lá hai bạn muốn.'
+                    : 'Cả ba lá đã lật. Bấm "Chọn lá này" dưới lá hai bạn muốn.'}
+            </p>
+            <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-5">
+              {finalChoice.candidates.map((card, index) => {
+                const revealed = finalChoice.revealedIds.includes(card.id);
+                const canFlip = finalChoice.flips === 1
+                  || (!revealed && finalChoice.revealedIds.length < finalChoice.flips);
+                const FinalIcon = getCardIcon(card.icon || autoAssignIcon(card.content));
+                return (
+                  <div key={card.id} className="flex flex-col items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleFinalCardTap(card)}
+                      disabled={!canFlip}
+                      aria-label={revealed ? `Lá ${index + 1}: ${finalCardTitle(card)}` : `Lá úp số ${index + 1}`}
+                      className="luxury-deck relative h-44 w-full max-w-[9.5rem] rounded-[1.1rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] disabled:cursor-default sm:h-56"
+                    >
+                      {revealed ? (
+                        <span className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[1.1rem] border border-[#e2c275]/45 bg-[linear-gradient(160deg,rgba(20,12,30,.97),rgba(45,24,52,.93))] p-2.5">
+                          {card.customImage ? (
+                            <img src={card.customImage} alt="" className="h-20 w-20 object-contain sm:h-24 sm:w-24" />
+                          ) : FinalIcon ? (
+                            <span className="card-icon-color h-16 w-16 sm:h-20 sm:w-20"><FinalIcon className="h-full w-full" /></span>
+                          ) : null}
+                          <span className="text-[11px] font-semibold leading-snug text-[#fff4d6] sm:text-xs">{finalCardTitle(card)}</span>
+                          <span className="text-[10px] font-semibold text-[#e2c275]">{derivePositionDifficultyStars(card)}★</span>
+                        </span>
+                      ) : (
+                        <span className="luxury-deck__face" aria-hidden="true">
+                          <span className="luxury-deck__inner">
+                            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#e2c275]/75">Have Sex</span>
+                            <span className="luxury-deck__seal">✦</span>
+                            <span className="font-serif-romantic text-sm font-semibold text-[#fff4d6]">{index + 1}</span>
+                          </span>
+                        </span>
+                      )}
+                    </button>
+                    {revealed && finalChoice.flips > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => chooseFinalCard(card)}
+                        className="min-h-10 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-3 text-[11px] font-bold text-[#08101f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fff4d6]"
+                      >
+                        Chọn lá này
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+              <span className="text-[11px] text-slate-300">
+                Ví chung: <strong className="text-amber-200">{sharedStarBalance}★</strong>
+              </span>
+              {finalChoice.flips < 2 && finalChoice.candidates.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => handleBuyFinalFlips(2)}
+                  disabled={sharedStarBalance < FINAL_FLIP_TWO_STAR_COST}
+                  className="min-h-11 rounded-full border border-[#e2c275]/35 bg-[#e2c275]/10 px-4 text-xs font-semibold text-[#fff4d6] transition-colors hover:bg-[#e2c275]/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Lật 2 lá · {FINAL_FLIP_TWO_STAR_COST}★
+                </button>
+              )}
+              {finalChoice.flips < 3 && finalChoice.candidates.length >= 3 && (
+                <button
+                  type="button"
+                  onClick={() => handleBuyFinalFlips(3)}
+                  disabled={sharedStarBalance < finalFlipCost(3, finalChoice.flips)}
+                  className="min-h-11 rounded-full border border-[#e2c275]/35 bg-[#e2c275]/10 px-4 text-xs font-semibold text-[#fff4d6] transition-colors hover:bg-[#e2c275]/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {finalChoice.flips === 2
+                    ? `Lật lá còn lại · ${finalFlipCost(3, 2)}★`
+                    : `Lật cả 3 lá · ${FINAL_FLIP_THREE_STAR_COST}★`}
+                </button>
+              )}
+            </div>
+          </motion.section>
+        )}
+
+        {(journeyPhase === 'position' || journeyPhase === 'final') && !finalChoice && !activeCard && drawState === 'idle' && drawError && (
           <section className="w-full max-w-md rounded-[1.5rem] border border-[#d7b1ff]/25 bg-[linear-gradient(160deg,rgba(10,12,25,.96),rgba(35,20,46,.9))] p-6 text-center" aria-labelledby="position-empty-title">
             <Heart className="mx-auto h-10 w-10 text-[#e8a48c]" aria-hidden="true" />
             <h2 id="position-empty-title" className="mt-3 font-serif-romantic text-2xl font-bold text-[#f1d6ff]">Chưa có lá phù hợp</h2>
@@ -1583,7 +1859,7 @@ export const GameTable: React.FC<GameTableProps> = ({
           </section>
         )}
 
-        {(journeyPhase === 'position' || journeyPhase === 'final') && !activeCard && drawState === 'idle' && !drawError && (
+        {(journeyPhase === 'position' || journeyPhase === 'final') && !finalChoice && !activeCard && drawState === 'idle' && !drawError && (
           <motion.section
             initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1672,6 +1948,8 @@ export const GameTable: React.FC<GameTableProps> = ({
               <span>rút lá bài tình yêu</span>
             </p>
 
+            {(playerRewards[currentPlayerIndex].starBalance >= DIFFICULTY_BOOST_STAR_COST
+              || pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === (currentPlayerIndex === 0 ? 1 : 0))) && (
             <button
               type="button"
               onClick={handleQueueDifficultyBoost}
@@ -1687,6 +1965,7 @@ export const GameTable: React.FC<GameTableProps> = ({
                 ? `Đã đặt tăng khó cho ${currentPlayerIndex === 0 ? player2.name : player1.name}`
                 : `Tăng khó ${currentPlayerIndex === 0 ? player2.name : player1.name} · ${DIFFICULTY_BOOST_STAR_COST}★`}
             </button>
+            )}
 
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -1959,6 +2238,15 @@ export const GameTable: React.FC<GameTableProps> = ({
                             ) : null;
                           })()}
 
+                          {clothingBanner && (
+                            <p
+                              role="note"
+                              className="mb-3 inline-flex items-center gap-2 rounded-full border border-rose-300/45 bg-rose-500/15 px-3 py-1.5 text-xs font-bold text-rose-100"
+                            >
+                              <span aria-hidden="true">👕</span>
+                              {clothingBanner}
+                            </p>
+                          )}
                           <p style={{ fontSize: `${16 * activeTextScale}px` }} className="text-white font-medium leading-relaxed max-w-sm">
                             {activeCard.content}
                           </p>
@@ -1997,6 +2285,16 @@ export const GameTable: React.FC<GameTableProps> = ({
                             >
                               {timerSeconds === 0 && <RotateCcw className="h-3 w-3" aria-hidden="true" />}
                               {timerSeconds === 0 ? 'Đếm lại' : isTimerRunning ? 'Tạm dừng' : 'Tiếp tục'}
+                            </button>
+                          ) : isPositionCard ? (
+                            <button
+                              type="button"
+                              onClick={handleTimerControl}
+                              style={{ fontSize: `${12 * activeTextScale}px` }}
+                              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e2c275]/30 bg-[#e2c275]/10 px-3 py-1 text-[#fff4d6] hover:bg-[#e2c275]/15"
+                            >
+                              <TimerIcon className="h-3 w-3" aria-hidden="true" />
+                              Bắt đầu đếm giờ
                             </button>
                           ) : (
                             <span className="rounded-full border border-amber-300/20 bg-amber-500/[0.07] px-2.5 py-1 text-[10px] font-semibold text-amber-100/80">
@@ -2037,15 +2335,25 @@ export const GameTable: React.FC<GameTableProps> = ({
                   >
                     Đã xem · Kết thúc ván
                   </button>
-                ) : timerSeconds !== null && !hasTimerStarted ? (
-                  <button
-                    type="button"
-                    onClick={handleTimerControl}
-                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 text-sm font-bold text-neutral-950 shadow-[0_0_22px_rgba(212,175,55,.32)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 motion-reduce:transform-none"
-                  >
-                    <TimerIcon className="h-4 w-4" aria-hidden="true" />
-                    Bắt đầu thực hiện · {timerSeconds}s
-                  </button>
+                ) : !isPositionCard && timerSeconds !== null && !hasTimerStarted ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleSkip}
+                      className="flex-1 py-3 px-4 rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-300 hover:text-white hover:border-neutral-500 transition-all font-medium text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4 text-neutral-400" aria-hidden="true" />
+                      <span>{activeCard.type === 'truth' ? 'Không trả lời' : 'Không thực hiện'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTimerControl}
+                      className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 text-sm font-bold text-neutral-950 shadow-[0_0_22px_rgba(212,175,55,.32)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 motion-reduce:transform-none"
+                    >
+                      <TimerIcon className="h-4 w-4" aria-hidden="true" />
+                      Bắt đầu · {timerSeconds}s
+                    </button>
+                  </>
                 ) : isPositionCard ? (
                   <>
                     <button
@@ -2115,6 +2423,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             cardType={activeCard.type}
             penaltyEnabled={settings.penaltyClothingEnabled}
             canRemoveGarment={canApplyPenaltyGarment}
+            lockedReason={penaltyLockedReason}
             onReturn={() => setShowPenaltyPrompt(false)}
             onChooseGarment={handlePenaltyGarmentChoice}
             onContinueWithoutPenalty={finalizeSkippedTurn}

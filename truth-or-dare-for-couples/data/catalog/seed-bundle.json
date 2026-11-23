@@ -554,22 +554,22 @@
       "isCustom": true,
       "deck": "standard",
       "progression": {
-        "difficultyStars": 4,
-        "audience": "both"
+        "difficultyStars": 2,
+        "turnAudience": "both"
       },
       "position": null
     },
     {
       "id": "custom-1787494469576",
       "type": "dare",
-      "level": "gentle",
+      "level": "intimate",
       "content": "Bạn nằm trên giường và bị bịt mắt, đối phương lấy thìa hoặc thước kẻ mơn trớn khắp cơ thể bạn, đánh nhẹ vào từng điểm nhạy cảm mà đối phương thích trong 1 phút",
       "icon": "heart",
       "isCustom": true,
       "timerSeconds": 60,
       "deck": "standard",
       "progression": {
-        "difficultyStars": 5,
+        "difficultyStars": 3,
         "turnAudience": "both"
       },
       "position": null
@@ -583,8 +583,8 @@
       "isCustom": true,
       "deck": "standard",
       "progression": {
-        "difficultyStars": 1,
-        "audience": "both"
+        "difficultyStars": 3,
+        "turnAudience": "both"
       },
       "position": null
     },
@@ -2302,6 +2302,421 @@
         ]
       },
       "type": "dare"
+    },
+    {
+      "id": "custom-p0-g-d-1",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Đan mười ngón tay vào tay đối phương, nhìn thẳng vào mắt nhau và mỉm cười trong 20 giây không được quay đi.",
+      "hint": "Ai bật cười trước phải hôn nhẹ lên mu bàn tay người kia.",
+      "icon": "eyes",
+      "isCustom": true,
+      "timerSeconds": 20,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "both",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-2",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Dùng đầu ngón tay vẽ một chữ cái hoặc hình trái tim lên lòng bàn tay đối phương (đối phương nhắm mắt) để họ đoán.",
+      "hint": "Chạm thật chậm để người ấy cảm nhận từng nét.",
+      "icon": "heart",
+      "isCustom": true,
+      "timerSeconds": 30,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "both",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-3",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Thì thầm vào tai đối phương 3 điều ở họ khiến bạn thấy may mắn khi có họ bên cạnh.",
+      "hint": "Giữ khoảng cách thật gần và nói bằng giọng nhỏ nhất có thể.",
+      "icon": "whisper",
+      "isCustom": true,
+      "timerSeconds": 30,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "both",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-4",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Tựa trán vào trán đối phương, nhắm mắt và cùng hít thở sâu theo cùng một nhịp trong 20 giây.",
+      "hint": "Cảm nhận hơi thở và hơi ấm của nhau.",
+      "icon": "heart",
+      "isCustom": true,
+      "timerSeconds": 20,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "both",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-5",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Bạn nam vòng tay ôm bạn nữ từ phía sau, đặt cằm lên vai cô ấy và đung đưa nhẹ trong 25 giây.",
+      "hint": "Một cái ôm ấm áp không cần nói lời nào.",
+      "icon": "heart",
+      "isCustom": true,
+      "timerSeconds": 25,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "male",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-6",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Bạn nữ dùng hai tay áp nhẹ lên má bạn nam, nhìn vào mắt anh ấy và đặt một nụ hôn lên chóp mũi hoặc trán.",
+      "hint": "Cử chỉ dịu dàng khởi đầu cuộc vui.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 20,
+      "deck": "standard",
+      "heat": 2,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 1,
+        "turnAudience": "female",
+        "heat": 2,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-7",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Massage nhẹ nhàng vùng vai, gáy và cổ cho đối phương trong 45 giây, vừa làm vừa hỏi xem họ thích lực mạnh hay nhẹ.",
+      "hint": "Chú ý phản ứng trên khuôn mặt người ấy.",
+      "icon": "heart",
+      "isCustom": true,
+      "timerSeconds": 45,
+      "deck": "standard",
+      "heat": 3,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 2,
+        "turnAudience": "both",
+        "heat": 3,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-g-d-8",
+      "type": "dare",
+      "level": "gentle",
+      "content": "Hôn lần lượt lên 3 vị trí trên khuôn mặt đối phương (trừ môi) và ở mỗi vị trí hãy nói một lời khen ngắn.",
+      "hint": "Ví dụ: mí mắt, má, chóp mũi, thái dương.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 30,
+      "deck": "standard",
+      "heat": 3,
+      "phaseTag": "gentle",
+      "progression": {
+        "difficultyStars": 2,
+        "turnAudience": "both",
+        "heat": 3,
+        "phaseTag": "gentle"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-p-t-1",
+      "type": "truth",
+      "level": "passionate",
+      "content": "Kịch bản \"nhập vai\" hoặc bối cảnh táo bạo nào mà bạn từng âm thầm tưởng tượng cùng đối phương nhưng chưa bao giờ nói ra?",
+      "hint": "Hãy chia sẻ thật chi tiết không gian và vai trò của hai người.",
+      "icon": "whisper",
+      "isCustom": true,
+      "deck": "standard",
+      "heat": 8,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "both",
+        "heat": 8,
+        "phaseTag": "passionate"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-p-t-2",
+      "type": "truth",
+      "level": "passionate",
+      "content": "Khoảnh khắc nào trên giường giữa hai chúng ta từng khiến bạn mất kiểm soát và sung sướng nhất từ trước tới nay?",
+      "hint": "Một cử chỉ, một âm thanh hay một tư thế cụ thể?",
+      "icon": "heart",
+      "isCustom": true,
+      "deck": "standard",
+      "heat": 8,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "both",
+        "heat": 8,
+        "phaseTag": "passionate"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-p-t-3",
+      "type": "truth",
+      "level": "passionate",
+      "content": "Ngay lúc này, nếu được yêu cầu đối phương dùng miệng hoặc tay chạm vào một điểm duy nhất trên cơ thể bạn trong 1 phút, bạn chọn đâu và theo cách nào?",
+      "hint": "Hãy mô tả tốc độ và cảm giác bạn muốn.",
+      "icon": "kiss",
+      "isCustom": true,
+      "deck": "standard",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "both",
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-p-t-4",
+      "type": "truth",
+      "level": "passionate",
+      "content": "Bạn nam: hình ảnh hoặc biểu cảm nào của bạn nữ khi hai người gần gũi khiến bạn bị kích thích mạnh nhất mỗi khi nhớ lại?",
+      "hint": "Ánh mắt, tiếng thở hay tư thế của cô ấy?",
+      "icon": "eyes",
+      "isCustom": true,
+      "deck": "standard",
+      "heat": 8,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "male",
+        "heat": 8,
+        "phaseTag": "passionate"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-p-t-5",
+      "type": "truth",
+      "level": "passionate",
+      "content": "Bạn nữ: cách chạm hoặc nhịp độ nào của bạn nam khiến cơ thể bạn tan chảy nhanh nhất trước khi cả hai thực sự hòa vào nhau?",
+      "hint": "Hãy chỉ dẫn thẳng thắn điều làm bạn thăng hoa nhất.",
+      "icon": "whisper",
+      "isCustom": true,
+      "deck": "standard",
+      "heat": 8,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "female",
+        "heat": 8,
+        "phaseTag": "passionate"
+      },
+      "position": null
+    },
+    {
+      "id": "custom-p0-pos-9-1",
+      "type": "dare",
+      "level": "passionate",
+      "content": "Bạn nam nằm ngửa, bạn nữ xoay ngược người nằm phía trên (tư thế 69) hoặc cả hai nằm nghiêng 69 để cùng lúc kích thích bằng miệng cho nhau theo nhịp chậm rồi tăng dần.",
+      "hint": "Tư thế Mutual 69 · Giữ nhịp đồng điệu với hơi thở của đối phương.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 60,
+      "deck": "position",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "both",
+        "actorStages": [
+          "empty"
+        ],
+        "partnerStages": [
+          "empty"
+        ],
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": {
+        "family": "oral",
+        "turnAudience": "both",
+        "orderGroup": 1,
+        "rarity": "luxury",
+        "difficultyStars": 9
+      }
+    },
+    {
+      "id": "custom-p0-pos-9-2",
+      "type": "dare",
+      "level": "passionate",
+      "content": "Bạn nữ ngồi trên mép bàn hoặc thành ghế cao, hai chân gác lên vai bạn nam khi anh ấy quỳ phía trước chăm sóc cobe; đồng thời bạn nữ cúi người hoặc dùng tay kích thích lại anh ấy.",
+      "hint": "Tư thế Elevated Throne · Giao tiếp bằng ánh mắt và độ siết của đôi chân.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 60,
+      "deck": "position",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "both",
+        "actorStages": [
+          "empty"
+        ],
+        "partnerStages": [
+          "empty"
+        ],
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": {
+        "family": "oral",
+        "turnAudience": "both",
+        "orderGroup": 1,
+        "rarity": "luxury",
+        "difficultyStars": 9
+      }
+    },
+    {
+      "id": "custom-p0-pos-9-3",
+      "type": "dare",
+      "level": "passionate",
+      "content": "Bạn nam đứng tựa lưng vào tường, bạn nữ quỳ phía trước và dùng cả miệng lẫn lưỡi chăm sóc caube từ gốc đến đỉnh kết hợp ngước mắt nhìn bạn nam.",
+      "hint": "Tư thế Wall Worship · Kết hợp tay vuốt nhẹ phần đùi trong của anh ấy.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 60,
+      "deck": "position",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "female",
+        "actorStages": [
+          "empty"
+        ],
+        "partnerStages": [
+          "empty"
+        ],
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": {
+        "family": "blowjob",
+        "turnAudience": "female",
+        "orderGroup": 2,
+        "rarity": "luxury",
+        "difficultyStars": 9
+      }
+    },
+    {
+      "id": "custom-p0-pos-9-4",
+      "type": "dare",
+      "level": "passionate",
+      "content": "Bạn nam nằm ngửa, bạn nữ ngồi kẹp hai bên đùi anh ấy, dùng dầu hoặc nước bọt làm ẩm rồi kết hợp cả hai tay cùng nhịp lưỡi mơn trớn đỉnh caube theo nhịp nhanh – chậm xen kẽ.",
+      "hint": "Tư thế Tease & Edge · Đưa anh ấy sát ngưỡng cao trào rồi chậm lại.",
+      "icon": "heart",
+      "isCustom": true,
+      "timerSeconds": 60,
+      "deck": "position",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "female",
+        "actorStages": [
+          "empty"
+        ],
+        "partnerStages": [
+          "empty"
+        ],
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": {
+        "family": "handjob",
+        "turnAudience": "female",
+        "orderGroup": 3,
+        "rarity": "luxury",
+        "difficultyStars": 9
+      }
+    },
+    {
+      "id": "custom-p0-pos-9-5",
+      "type": "dare",
+      "level": "passionate",
+      "content": "Bạn nữ nằm ngửa với một chiếc gối kê dưới hông để nâng cao vùng nhạy cảm; bạn nam nằm sấp giữa hai chân cô ấy, dùng lưỡi kích thích đồng thời kết hợp 1–2 ngón tay đưa vào cobe theo nhịp cong lên trên.",
+      "hint": "Tư thế Dual Wave · Phối hợp nhịp lưỡi và ngón tay cùng lúc.",
+      "icon": "kiss",
+      "isCustom": true,
+      "timerSeconds": 60,
+      "deck": "position",
+      "heat": 9,
+      "phaseTag": "passionate",
+      "progression": {
+        "difficultyStars": 5,
+        "turnAudience": "male",
+        "actorStages": [
+          "empty"
+        ],
+        "partnerStages": [
+          "empty"
+        ],
+        "heat": 9,
+        "phaseTag": "passionate"
+      },
+      "position": {
+        "family": "oral",
+        "turnAudience": "male",
+        "orderGroup": 1,
+        "rarity": "luxury",
+        "difficultyStars": 9
+      }
     }
   ],
   "editedCards": [
@@ -2583,7 +2998,11 @@
         "difficultyStars": 1,
         "audience": "both"
       },
-      "illustrationOverride": true
+      "illustrationOverride": true,
+      "timerSeconds": null,
+      "gameplayEffect": {
+        "kind": "pass_turn"
+      }
     },
     {
       "id": "i-t-2",
@@ -3518,9 +3937,9 @@
         "minPercent": 0,
         "maxPercent": 19,
         "starWeights": {
-          "6": 50,
-          "7": 30,
-          "8": 20,
+          "6": 65,
+          "7": 35,
+          "8": 0,
           "9": 0,
           "10": 0
         }
@@ -3529,21 +3948,21 @@
         "minPercent": 20,
         "maxPercent": 39,
         "starWeights": {
-          "6": 0,
-          "7": 20,
-          "8": 40,
-          "9": 25,
-          "10": 15
+          "6": 30,
+          "7": 50,
+          "8": 20,
+          "9": 0,
+          "10": 0
         }
       },
       {
         "minPercent": 40,
         "maxPercent": 59,
         "starWeights": {
-          "6": 20,
-          "7": 10,
-          "8": 0,
-          "9": 0,
+          "6": 10,
+          "7": 35,
+          "8": 45,
+          "9": 10,
           "10": 0
         }
       },
@@ -3551,10 +3970,10 @@
         "minPercent": 60,
         "maxPercent": 79,
         "starWeights": {
-          "6": 25,
-          "7": 35,
-          "8": 20,
-          "9": 10,
+          "6": 0,
+          "7": 15,
+          "8": 45,
+          "9": 40,
           "10": 0
         }
       },
@@ -3562,19 +3981,19 @@
         "minPercent": 80,
         "maxPercent": 99,
         "starWeights": {
-          "6": 10,
-          "7": 20,
-          "8": 25,
-          "9": 35,
-          "10": 5
+          "6": 0,
+          "7": 10,
+          "8": 30,
+          "9": 60,
+          "10": 25
         }
       }
     ],
     "starGains": {
-      "6": 11,
-      "7": 12,
-      "8": 13,
-      "9": 14,
+      "6": 7,
+      "7": 8,
+      "8": 9,
+      "9": 10,
       "10": 0
     },
     "finalCardChance": 5

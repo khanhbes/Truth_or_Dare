@@ -20,17 +20,65 @@ export interface DynamicClothingSchedulerState {
   lastTriggeredRound: number;
 }
 
+/** No clothing progression is scheduled before this intimacy level. */
+export const CLOTHING_SCHEDULE_START_PERCENT = 20;
+/** Outer layers (shirt/pants) are spread across this window so both reach underwear_only around 70–80%. */
+export const OUTER_LAYER_WINDOW: readonly [number, number] = [22, 76];
 /**
- * Creates a randomized clothing removal schedule for Level 1 / Standard Journey (0% - 100%).
- * Generates exactly count0 triggers targeting Player 0 and count1 triggers targeting Player 1,
- * randomly distributed across the intimacy timeline.
+ * Inner layers (bra/underwear) are spread across this later window so every
+ * garment is normally removed by a card before Tim Hồng reaches 100%.
+ */
+export const INNER_LAYER_WINDOW: readonly [number, number] = [76, 93];
+/** From this intimacy level any remaining garment may be offered immediately. */
+export const CLOTHING_CATCH_UP_PERCENT = 88;
+/** A skipped removal comes back after roughly one more completed card. */
+export const SKIPPED_REMOVAL_DELAY_PERCENT = 5;
+
+const OUTER_SLOTS = new Set(['shirt', 'pants']);
+
+/** Alternates players (random first player) so neither side is stripped twice in a row when avoidable. */
+const interleaveTargets = (
+  count0: number,
+  count1: number,
+  random: () => number,
+): PlayerIndex[] => {
+  const remaining: [number, number] = [count0, count1];
+  const targets: PlayerIndex[] = [];
+  let next: PlayerIndex = random() < 0.5 ? 0 : 1;
+  while (remaining[0] + remaining[1] > 0) {
+    if (remaining[next] === 0) next = next === 0 ? 1 : 0;
+    targets.push(next);
+    remaining[next] -= 1;
+    next = next === 0 ? 1 : 0;
+  }
+  return targets;
+};
+
+const stratifiedPercents = (
+  count: number,
+  [min, max]: readonly [number, number],
+  random: () => number,
+): number[] => {
+  if (count <= 0) return [];
+  const binSize = (max - min) / count;
+  return Array.from({ length: count }, (_, index) =>
+    Math.max(min, Math.min(max, Math.round(min + index * binSize + random() * binSize * 0.85))),
+  );
+};
+
+/**
+ * Creates the Standard Journey clothing schedule.
+ * One trigger per garment: outer layers are spread across 20–78% (alternating
+ * players), inner layers across 82–95%, so the first removal lands around
+ * 20–30% and both players reach underwear-only around 75–90%.
  */
 export const createDynamicClothingSchedule = (
   outfits: readonly [OutfitState, OutfitState],
   random: () => number = Math.random,
 ): DynamicClothingSchedulerState => {
-  const count0 = getPresentGarmentSlots(outfits[0]).length;
-  const count1 = getPresentGarmentSlots(outfits[1]).length;
+  const slots = outfits.map(getPresentGarmentSlots);
+  const count0 = slots[0].length;
+  const count1 = slots[1].length;
   const total = count0 + count1;
 
   if (total === 0) {
@@ -42,41 +90,23 @@ export const createDynamicClothingSchedule = (
     };
   }
 
-  // Create an array of target player indices
-  const targets: PlayerIndex[] = [];
-  for (let i = 0; i < count0; i++) targets.push(0);
-  for (let i = 0; i < count1; i++) targets.push(1);
+  const outerCounts = slots.map((list) => list.filter((slot) => OUTER_SLOTS.has(slot)).length);
+  const innerCounts = slots.map((list, index) => list.length - outerCounts[index]);
+  const outerTargets = interleaveTargets(outerCounts[0], outerCounts[1], random);
+  const innerTargets = interleaveTargets(innerCounts[0], innerCounts[1], random);
+  const outerPercents = stratifiedPercents(outerTargets.length, OUTER_LAYER_WINDOW, random);
+  const innerPercents = stratifiedPercents(innerTargets.length, INNER_LAYER_WINDOW, random);
 
-  // Shuffle targets while avoiding long streaks of the same player
-  for (let i = targets.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [targets[i], targets[j]] = [targets[j], targets[i]];
-  }
+  const items: DynamicClothingScheduleItem[] = [
+    ...outerTargets.map((targetIndex, index) => ({ targetIndex, percent: outerPercents[index] })),
+    ...innerTargets.map((targetIndex, index) => ({ targetIndex, percent: innerPercents[index] })),
+  ].map(({ targetIndex, percent }, index) => ({
+    id: `strip-${index}-${targetIndex}-${Math.round(random() * 10000)}`,
+    targetPlayerIndex: targetIndex,
+    triggerIntimacyPercent: percent,
+    status: 'pending' as const,
+  }));
 
-  // Stratified random intervals between 6% and 92%
-  // This ensures triggers appear randomly at ANY %, but well-spaced across the entire level
-  const minRange = 6;
-  const maxRange = 92;
-  const rangeSpan = maxRange - minRange;
-  const binSize = rangeSpan / total;
-
-  const items: DynamicClothingScheduleItem[] = targets.map((targetIndex, index) => {
-    const binStart = minRange + index * binSize;
-    const jitter = random() * (binSize * 0.85);
-    const triggerPercent = Math.max(
-      minRange,
-      Math.min(maxRange, Math.round(binStart + jitter)),
-    );
-
-    return {
-      id: `strip-${index}-${targetIndex}-${Math.round(random() * 10000)}`,
-      targetPlayerIndex: targetIndex,
-      triggerIntimacyPercent: triggerPercent,
-      status: 'pending',
-    };
-  });
-
-  // Sort items by triggerIntimacyPercent so they execute in chronological order
   items.sort((a, b) => a.triggerIntimacyPercent - b.triggerIntimacyPercent);
 
   return {
@@ -102,10 +132,10 @@ export const getActiveClothingRemovalTarget = (
   if (!p0Removable && !p1Removable) {
     return null; // Both players already have 0 clothes left!
   }
+  if (intimacyPercent < CLOTHING_SCHEDULE_START_PERCENT) return null;
 
-  // 1. Emergency Catch-Up when intimacy >= 90%:
-  // If players still have clothes left near the end of Level 1, trigger immediately!
-  if (intimacyPercent >= 90) {
+  // 1. Late catch-up: any garment still on near the end of Level 1 is offered immediately.
+  if (intimacyPercent >= CLOTHING_CATCH_UP_PERCENT) {
     if (p0Removable && p1Removable) {
       // Pick player with more garments remaining
       const g0 = getPresentGarmentSlots(outfits[0]).length;
@@ -156,36 +186,64 @@ export const getActiveClothingRemovalTarget = (
 
 /**
  * Injects a clothing removal effect into a card dynamically if not already present.
+ * The card text and hint stay untouched; the table renders the removal as a
+ * dedicated banner on the card face so it is read aloud with the dare.
  */
 export const injectClothingDirective = (
   card: CardItem,
   actorPlayerIndex: PlayerIndex,
   targetPlayerIndex: PlayerIndex,
-  targetName: string,
 ): CardItem => {
   // If card already has a valid clothing effect targeting the desired recipient, keep it
   if (card.clothingEffect?.kind === 'remove_garment') {
     return card;
   }
 
-  const effectTarget = actorPlayerIndex === targetPlayerIndex ? 'self' : 'opponent';
   const clothingEffect: ClothingEffect = {
     kind: 'remove_garment',
-    target: effectTarget,
+    target: actorPlayerIndex === targetPlayerIndex ? 'self' : 'opponent',
   };
-
-  const actionText = actorPlayerIndex === targetPlayerIndex
-    ? 'Tự cởi bỏ 1 món đồ đang mặc.'
-    : `Cởi bỏ 1 món đồ của ${targetName}.`;
-
-  const dynamicHint = card.hint
-    ? `${card.hint} · 👕 Thử thách trang phục: ${actionText}`
-    : `👕 Thử thách trang phục: ${actionText}`;
 
   return {
     ...card,
     clothingEffect,
-    hint: dynamicHint,
+  };
+};
+
+/**
+ * Clothing directives are only attached to Standard Dare cards that do not
+ * already carry their own clothing or gameplay effect. Truth questions never
+ * receive a removal instruction.
+ */
+export const shouldInjectClothingDirective = (card: CardItem): boolean =>
+  card.type === 'dare'
+  && card.deck !== 'position'
+  && !card.clothingEffect
+  && !card.gameplayEffect;
+
+/**
+ * Records a garment removal that did not come from a scheduled trigger
+ * (fixed clothing cards, both-removal cards or skip penalties) so the
+ * schedule never asks for more removals than the outfits allow.
+ */
+export const consumeScheduledRemoval = (
+  state: DynamicClothingSchedulerState,
+  targetIndex: PlayerIndex,
+): DynamicClothingSchedulerState => {
+  const itemIndex = state.items.findIndex(
+    (item) => item.status !== 'completed' && item.targetPlayerIndex === targetIndex,
+  );
+  const completedRemovals: [number, number] = [
+    state.completedRemovals[0] + (targetIndex === 0 ? 1 : 0),
+    state.completedRemovals[1] + (targetIndex === 1 ? 1 : 0),
+  ];
+  if (itemIndex < 0) return { ...state, completedRemovals };
+  return {
+    ...state,
+    completedRemovals,
+    items: state.items.map((item, index) =>
+      index === itemIndex ? { ...item, status: 'completed' as const } : item,
+    ),
   };
 };
 
@@ -222,13 +280,13 @@ export const updateDynamicClothingScheduler = (
   }
 
   // Result === 'skipped'
-  // Reschedule the item: push its trigger to next round or +2% intimacy
+  // Reschedule the item a little later so the next card is not another removal.
   const nextItems = state.items.map((item, index) => {
     if (index === itemIndex) {
       return {
         ...item,
         status: 'pending' as const,
-        triggerIntimacyPercent: Math.min(95, currentIntimacy + 1),
+        triggerIntimacyPercent: Math.min(95, currentIntimacy + SKIPPED_REMOVAL_DELAY_PERCENT),
       };
     }
     return item;

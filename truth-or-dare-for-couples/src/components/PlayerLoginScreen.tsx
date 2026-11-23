@@ -18,26 +18,11 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
 }) => {
   const [authMode, setAuthMode] = useState<'couple' | 'guest'>('couple');
   const [coupleAction, setCoupleAction] = useState<'login' | 'register'>('login');
-  const [coupleName, setCoupleName] = useState('khanhnhim21102004@gmail.com');
+  const [coupleName, setCoupleName] = useState('');
   const [pin, setPin] = useState('');
   const [guestName, setGuestName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(initialError || '');
-
-  const handleQuickKhanh = async () => {
-    setCoupleName('khanhnhim21102004@gmail.com');
-    setPin('');
-    setBusy(true);
-    setError('');
-    try {
-      if (!onCoupleLogin) throw new Error('Tính năng đăng nhập chưa sẵn sàng.');
-      await onCoupleLogin('khanhnhim21102004@gmail.com', '');
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Không thể kết nối máy chủ.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const handleCoupleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -48,8 +33,8 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
       setError('Vui lòng nhập email hoặc tên cặp đôi (từ 2 đến 120 ký tự).');
       return;
     }
-    if (trimmedPin && !/^[0-9]{4,8}$/.test(trimmedPin)) {
-      setError('Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số (hoặc để trống).');
+    if (!/^[0-9]{4,8}$/.test(trimmedPin)) {
+      setError('Mã PIN bảo mật phải gồm từ 4 đến 8 chữ số.');
       return;
     }
 
@@ -141,17 +126,6 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
 
         {authMode === 'couple' ? (
           <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-5 text-left backdrop-blur-xl">
-            {/* Quick 1-click chip */}
-            <button
-              type="button"
-              onClick={handleQuickKhanh}
-              disabled={busy}
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-amber-400/40 bg-gradient-to-r from-amber-500/20 via-rose-500/20 to-pink-500/20 px-3.5 py-2.5 text-xs font-bold text-amber-200 transition-all hover:scale-[1.01] hover:border-amber-300 disabled:opacity-50"
-            >
-              <Sparkles className="h-4 w-4 text-amber-300" />
-              <span>Đăng nhập nhanh: <strong>khanhnhim21102004@gmail.com</strong></span>
-            </button>
-
             {/* Sub-action pill */}
             <div className="mb-4 flex justify-center gap-2 border-b border-white/10 pb-3 text-xs">
               <button
@@ -172,9 +146,6 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setCoupleAction('register');
-                  if (coupleName === 'khanhnhim21102004@gmail.com') {
-                    setCoupleName('');
-                  }
                   setError('');
                 }}
                 className={`rounded-lg px-3 py-1 font-medium transition-colors ${
@@ -199,14 +170,14 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                   maxLength={120}
                   autoComplete="email"
                   autoFocus
-                  placeholder={coupleAction === 'register' ? 'email-cua-ban@gmail.com' : 'khanhnhim21102004@gmail.com'}
+                  placeholder="email-cua-ban@gmail.com hoặc tên cặp đôi"
                   className="mt-1.5 min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] px-3.5 text-sm text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
                 />
               </div>
 
               <div>
                 <label htmlFor="couple-pin" className="block text-[11px] font-semibold uppercase tracking-wider text-neutral-300">
-                  Mã PIN bảo mật (Tùy chọn)
+                  Mã PIN bảo mật (4–8 chữ số)
                 </label>
                 <div className="relative mt-1.5">
                   <input
@@ -217,7 +188,9 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                     maxLength={8}
                     value={pin}
                     onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
-                    placeholder="Để trống nếu không đặt PIN"
+                    required
+                    minLength={4}
+                    placeholder={coupleAction === 'register' ? 'Đặt mã PIN để bảo vệ tài khoản' : 'Nhập mã PIN'}
                     className="min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] pl-3.5 pr-9 text-sm text-white tracking-widest outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
                   />
                   <KeyRound className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-neutral-500" />

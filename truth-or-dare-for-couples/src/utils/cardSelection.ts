@@ -166,7 +166,9 @@ export const normalizeCardClothingEffect = (card: CardItem): CardItem => {
     }
     return card;
   }
-  if (effect.target === 'male' || effect.target === 'female' || effect.target === 'both') {
+  // Standard cards address players relative to the drawer (self/opponent);
+  // `both` means each player removes one garment at the same time.
+  if (effect.target === 'male' || effect.target === 'female') {
     const next = { ...card };
     delete next.clothingEffect;
     return next;
@@ -194,6 +196,7 @@ export const getRemovalTargetIndices = (
   }
   if (effect.target === 'self') return [actorIndex];
   if (effect.target === 'opponent') return [actorIndex === 0 ? 1 : 0];
+  if (effect.target === 'both') return [0, 1];
   return [];
 };
 

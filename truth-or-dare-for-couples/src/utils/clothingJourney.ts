@@ -18,11 +18,14 @@ export const getCardClothingIntensity = (card: CardItem): ClothingIntensity | nu
   return 'C2';
 };
 
+/** No fixed clothing card is ever offered before this intimacy level. */
+export const FIXED_CLOTHING_MIN_PERCENT = 20;
+
 export const isClothingIntensityAllowed = (card: CardItem, intimacy: number): boolean => {
   const intensity = getCardClothingIntensity(card);
   if (!intensity) return true;
   const [min, max] = CLOTHING_INTENSITY_WINDOWS[intensity];
-  return intimacy >= Math.max(0, min - 15) && intimacy <= max + 15;
+  return intimacy >= Math.max(FIXED_CLOTHING_MIN_PERCENT, min - 15) && intimacy <= max + 15;
 };
 
 export const getClothingFamilyCounts = (cards: readonly CardItem[]): Record<ClothingFamily, number> => {

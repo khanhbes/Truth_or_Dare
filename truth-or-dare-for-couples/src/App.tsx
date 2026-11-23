@@ -24,6 +24,13 @@ import {
   RewardEvent,
 } from './types';
 import { INITIAL_CARDS } from './data/cards';
+import { EXPANSION_CARDS } from './data/expansionCards';
+import { withoutCardFrames } from './utils/cardFrames';
+import {
+  applyAccountCatalog,
+  wouldBreakFinalChoice,
+  type AccountCatalog,
+} from './utils/accountCatalog';
 import { mergeEditedSystemCard, normalizeCardClothingEffect } from './utils/cardSelection';
 import { createOutfitState, hydrateGameSettings } from './utils/wardrobe';
 import { getCardDeck, hydrateLuxuryProgressionConfig, hydrateProgressionConfig } from './utils/progression';
@@ -50,11 +57,17 @@ import {
   type PlayerSession,
 } from './utils/playerSession';
 import {
+  CoupleApiError,
+  fetchCoupleCatalog,
   getCoupleSession,
+  hydrateAccountCardImages,
   loginCouple,
   logoutCouple,
   registerCouple,
+  resetCoupleCatalog,
+  saveCoupleCatalog,
   syncCoupleUnlockedCards,
+  uploadAccountCardImage,
   type CoupleSession,
 } from './utils/coupleSession';
 import { parseStoredCards, type CatalogPayload } from './utils/cardSchema';
@@ -92,6 +105,9 @@ const STORAGE_KEYS = {
 };
 
 type AppMode = 'player' | 'developer';
+
+/** Built-in cards plus the audit expansion (clothing cards and admin frames). */
+const SYSTEM_CARDS: readonly CardItem[] = [...INITIAL_CARDS, ...EXPANSION_CARDS];
 
 const loadStoredAppMode = (): AppMode => {
   return typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
@@ -143,6 +159,10 @@ export default function App() {
     appMode === 'developer' ? { loggedIn: true } : null,
   );
   const [coupleSession, setCoupleSession] = useState<CoupleSession | null>(null);
+  const [accountCatalog, setAccountCatalog] = useState<AccountCatalog | null>(null);
+  const [accountDeckMessage, setAccountDeckMessage] = useState<string | null>(null);
+  const accountCatalogRef = useRef<AccountCatalog | null>(null);
+  const accountSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [playerSessionError, setPlayerSessionError] = useState<string | null>(null);
   const [adminPlayerStats, setAdminPlayerStats] = useState<AdminPlayerStats | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -239,7 +259,6 @@ export default function App() {
   useEffect(() => {
     if (appMode === 'developer') return;
     let active = true;
-    const deliberateLogout = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tod_deliberate_logout') === 'true';
 
     void Promise.all([
       getCoupleSession().catch(() => ({ loggedIn: false } as CoupleSession)),
@@ -253,25 +272,6 @@ export default function App() {
         const cards = Array.isArray(cSession.unlockedCardIds) ? cSession.unlockedCardIds : [];
         setUnlockedCardIds(cards);
         try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
-      } else if (!deliberateLogout) {
-        // Automatically reconnect to khanhnhim21102004@gmail.com if not deliberately logged out
-        try {
-          const autoSession = await loginCouple('khanhnhim21102004@gmail.com', '');
-          if (autoSession.loggedIn) {
-            setCoupleSession(autoSession);
-            setPlayerSession({ loggedIn: true, displayName: autoSession.coupleName });
-            const cards = Array.isArray(autoSession.unlockedCardIds) ? autoSession.unlockedCardIds : [];
-            setUnlockedCardIds(cards);
-            try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
-            return;
-          }
-        } catch {}
-
-        if (pSession.loggedIn) {
-          setPlayerSession(pSession);
-        } else {
-          setPlayerSession({ loggedIn: false });
-        }
       } else {
         if (pSession.loggedIn) {
           setPlayerSession(pSession);
@@ -442,19 +442,33 @@ export default function App() {
       editedCards.map((card) => [card.id, card] as const),
     );
     return [
-      ...INITIAL_CARDS
+      ...SYSTEM_CARDS
         .filter((card) => !deletedSystemCardIds.includes(card.id))
         .map((card) => mergeEditedSystemCard(card, editedCardMap.get(card.id))),
       ...customCards,
     ].sort(compareCollectionCards);
   }, [customCards, editedCards, deletedSystemCardIds]);
 
+  // Cards players can meet: the shared catalog with the couple account's own
+  // deck applied (own cards added, removed cards hidden). Frames that still
+  // wait for admin content never reach players.
+  const playerCards = useMemo(
+    () => withoutCardFrames(applyAccountCatalog(allCards, appMode === 'player' ? accountCatalog : null))
+      .sort(compareCollectionCards),
+    [allCards, accountCatalog, appMode],
+  );
+  const hiddenAccountCards = useMemo(() => {
+    if (!accountCatalog) return [];
+    const hidden = new Set(accountCatalog.hiddenCardIds);
+    return withoutCardFrames(allCards.filter((card) => hidden.has(card.id)));
+  }, [allCards, accountCatalog]);
+
   // Filter available cards by active levels selected in settings (memoized)
   const availableCards = useMemo(
-    () => allCards.filter(
+    () => playerCards.filter(
       (card) => getCardDeck(card) === 'position' || settings.levels.includes(card.level),
     ),
-    [allCards, settings.levels],
+    [playerCards, settings.levels],
   );
 
   useEffect(() => {
@@ -557,6 +571,120 @@ export default function App() {
       localStorage.setItem(STORAGE_KEYS.LUXURY_PROGRESSION_CONFIG, JSON.stringify(luxuryProgressionConfig));
     } catch {}
   }, [luxuryProgressionConfig, catalogSync.mode]);
+
+  const applyAccountCatalogState = (next: AccountCatalog | null) => {
+    accountCatalogRef.current = next;
+    setAccountCatalog(next);
+  };
+
+  useEffect(() => {
+    if (appMode !== 'player' || !coupleSession?.loggedIn) {
+      applyAccountCatalogState(null);
+      return;
+    }
+    let active = true;
+    void fetchCoupleCatalog().then(async (catalog) => {
+      if (!active) return;
+      applyAccountCatalogState(catalog);
+      const customCardsWithImages = await hydrateAccountCardImages(catalog.customCards);
+      if (!active || accountCatalogRef.current?.revision !== catalog.revision) return;
+      applyAccountCatalogState({ ...catalog, customCards: customCardsWithImages });
+    }).catch(() => {
+      if (active) setAccountDeckMessage('Chưa tải được bộ thẻ riêng của tài khoản; đang dùng bộ thẻ mặc định.');
+    });
+    return () => { active = false; };
+  }, [appMode, coupleSession?.loggedIn, coupleSession?.coupleId]);
+
+  /** Optimistically applies a deck change, then saves it in order on the server. */
+  const updateAccountDeck = (
+    change: (current: AccountCatalog) => Pick<AccountCatalog, 'customCards' | 'hiddenCardIds'>,
+    label: string,
+  ) => {
+    const current = accountCatalogRef.current;
+    if (!current) return;
+    const nextLists = change(current);
+    applyAccountCatalogState({ ...current, ...nextLists });
+    setAccountDeckMessage(`${label}…`);
+    accountSaveQueueRef.current = accountSaveQueueRef.current.then(async () => {
+      const latest = accountCatalogRef.current;
+      if (!latest) return;
+      const customCards = await Promise.all(latest.customCards.map(uploadAccountCardImage));
+      const saved = await saveCoupleCatalog({
+        customCards: customCards.map(({ customImage: _inline, ...card }) => card),
+        hiddenCardIds: latest.hiddenCardIds,
+      }, latest.revision);
+      const inlineImages = new Map<string, string | undefined>(latest.customCards.map((card) => [card.id, card.customImage]));
+      applyAccountCatalogState({
+        ...saved,
+        customCards: saved.customCards.map((card) => ({ ...card, customImage: inlineImages.get(card.id) })),
+        hiddenCardIds: accountCatalogRef.current?.hiddenCardIds ?? saved.hiddenCardIds,
+      });
+      setAccountDeckMessage('Đã lưu bộ thẻ của tài khoản.');
+    }).catch(async (error) => {
+      if (error instanceof CoupleApiError && error.code === 'STALE_ACCOUNT_CATALOG') {
+        const fresh = await fetchCoupleCatalog().catch(() => null);
+        if (fresh) applyAccountCatalogState({ ...fresh, customCards: await hydrateAccountCardImages(fresh.customCards) });
+        setAccountDeckMessage('Bộ thẻ vừa được đổi trên thiết bị khác; đã tải bản mới nhất, hãy thao tác lại.');
+        return;
+      }
+      setAccountDeckMessage(error instanceof Error ? `Chưa lưu được: ${error.message}` : 'Chưa lưu được bộ thẻ.');
+    });
+  };
+
+  const handleAccountAddCard = (card: CardItem) => {
+    const id = card.id.startsWith('acct-') ? card.id : `acct-${Date.now()}`;
+    const ownCard: CardItem = { ...card, id, isCustom: true };
+    updateAccountDeck((current) => ({
+      customCards: [ownCard, ...current.customCards.filter((item) => item.id !== id)],
+      hiddenCardIds: current.hiddenCardIds,
+    }), 'Đang thêm thẻ riêng');
+  };
+
+  const handleAccountUpdateCard = (card: CardItem) => {
+    if (!accountCatalogRef.current?.customCards.some((item) => item.id === card.id)) return;
+    updateAccountDeck((current) => ({
+      customCards: current.customCards.map((item) => item.id === card.id ? { ...card, isCustom: true } : item),
+      hiddenCardIds: current.hiddenCardIds,
+    }), 'Đang lưu thẻ riêng');
+  };
+
+  const handleAccountDeleteCard = (card: CardItem) => {
+    const current = accountCatalogRef.current;
+    if (!current) return;
+    if (current.customCards.some((item) => item.id === card.id)) {
+      updateAccountDeck((latest) => ({
+        customCards: latest.customCards.filter((item) => item.id !== card.id),
+        hiddenCardIds: latest.hiddenCardIds,
+      }), 'Đang xóa thẻ riêng');
+      return;
+    }
+    if (wouldBreakFinalChoice(playerCards, card)) {
+      setAccountDeckMessage('Cần giữ ít nhất 3 lá Have Sex cho màn chọn lá cuối.');
+      return;
+    }
+    updateAccountDeck((latest) => ({
+      customCards: latest.customCards,
+      hiddenCardIds: latest.hiddenCardIds.includes(card.id) ? latest.hiddenCardIds : [...latest.hiddenCardIds, card.id],
+    }), 'Đang xóa thẻ khỏi bộ của tài khoản');
+  };
+
+  const handleAccountRestoreCard = (cardId: string) => {
+    updateAccountDeck((current) => ({
+      customCards: current.customCards,
+      hiddenCardIds: current.hiddenCardIds.filter((id) => id !== cardId),
+    }), 'Đang khôi phục thẻ');
+  };
+
+  const handleAccountResetDeck = () => {
+    setAccountDeckMessage('Đang khôi phục bộ thẻ mặc định…');
+    accountSaveQueueRef.current = accountSaveQueueRef.current.then(async () => {
+      const reset = await resetCoupleCatalog();
+      applyAccountCatalogState(reset);
+      setAccountDeckMessage('Đã khôi phục bộ thẻ mặc định. Tiến trình đã mở được giữ nguyên.');
+    }).catch((error) => {
+      setAccountDeckMessage(error instanceof Error ? `Chưa khôi phục được: ${error.message}` : 'Chưa khôi phục được bộ thẻ.');
+    });
+  };
 
   // Favorite toggle
   const handleToggleFavorite = (cardId: string) => {
@@ -795,7 +923,7 @@ export default function App() {
       cloudAssets: cloudCatalog?.assets,
     });
     downloadBlob(backup, `true-or-dare-r${datasetRevisionRef.current}.todbackup.zip`);
-    return `Đã xuất ${INITIAL_CARDS.length - deletedSystemCardIds.length + customCards.length} thẻ từ trạng thái hiện tại trên thiết bị.`;
+    return `Đã xuất ${SYSTEM_CARDS.length - deletedSystemCardIds.length + customCards.length} thẻ từ trạng thái hiện tại trên thiết bị.`;
   };
 
   const handleCreateCloudBackup = async (): Promise<string> => {
@@ -815,7 +943,7 @@ export default function App() {
     // protected admin endpoint remains the source of truth for authorization.
     const bundle = await readCatalogZip(file);
     const dryRun = await importCloudBackup(bundle, { dryRun: true, replace: true });
-    const total = INITIAL_CARDS.length - dryRun.counts.deletedSystemCards + dryRun.counts.customCards;
+    const total = SYSTEM_CARDS.length - dryRun.counts.deletedSystemCards + dryRun.counts.customCards;
     if (!window.confirm(
       `Dry-run hợp lệ: ${total} thẻ, ${dryRun.counts.assets} ảnh. Tiếp tục thay catalog hiện tại? Cloud sẽ tự tạo backup trước khi thay.`,
     )) return 'Đã kiểm tra backup; chưa thay đổi dữ liệu cloud.';
@@ -837,7 +965,7 @@ export default function App() {
       lastBackupAt: remote.lastBackupAt,
       message: 'Đã phục hồi backup và đồng bộ catalog mới',
     });
-    return `Đã phục hồi ${INITIAL_CARDS.length - remote.counts.deletedSystemCards + remote.counts.customCards} thẻ.`;
+    return `Đã phục hồi ${SYSTEM_CARDS.length - remote.counts.deletedSystemCards + remote.counts.customCards} thẻ.`;
   };
 
   // Start game handler
@@ -917,6 +1045,8 @@ export default function App() {
     await logoutCouple();
     await logoutPlayer().catch(() => undefined);
     setCoupleSession(null);
+    applyAccountCatalogState(null);
+    setAccountDeckMessage(null);
     setPlayerSession({ loggedIn: false });
     setUnlockedCardIds([]);
     try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
@@ -948,8 +1078,7 @@ export default function App() {
         }}
         onCoupleLogin={async (coupleName, pin) => {
           try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const isKhanh = coupleName.trim().toLowerCase() === 'khanhnhim21102004@gmail.com';
-          const session = await loginCouple(coupleName, pin, isKhanh ? [] : unlockedCardIds);
+          const session = await loginCouple(coupleName, pin, unlockedCardIds);
           setCoupleSession(session);
           setPlayerSession({ loggedIn: true, displayName: session.coupleName });
           const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
@@ -960,7 +1089,7 @@ export default function App() {
         }}
         onCoupleRegister={async (coupleName, pin) => {
           try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const session = await registerCouple(coupleName, pin, []);
+          const session = await registerCouple(coupleName, pin);
           setCoupleSession(session);
           setPlayerSession({ loggedIn: true, displayName: session.coupleName });
           setUnlockedCardIds([]);
@@ -1075,15 +1204,24 @@ export default function App() {
         {screen === 'collection' && (
           <Suspense fallback={<div className="grid min-h-screen place-items-center text-sm text-rose-200">Đang mở Bộ sưu tập…</div>}>
             <CardCollection
-            cards={allCards}
+            cards={appMode === 'developer' ? allCards : playerCards}
             mode={appMode}
-            unlockedCardIds={unlockedCardIds}
+            unlockedCardIds={appMode === 'developer' || !accountCatalog
+              ? unlockedCardIds
+              : [...unlockedCardIds, ...accountCatalog.customCards.map((card) => card.id)]}
             backDestination={collectionReturnScreen === 'game' ? 'game' : 'home'}
             favorites={favorites}
             onToggleFavorite={handleToggleFavorite}
-            onAddCustomCard={appMode === 'developer' ? handleAddCustomCard : undefined}
-            onUpdateCard={appMode === 'developer' ? handleUpdateCard : undefined}
-            onDeleteCard={appMode === 'developer' ? handleDeleteCard : undefined}
+            onAddCustomCard={appMode === 'developer' ? handleAddCustomCard : accountCatalog ? handleAccountAddCard : undefined}
+            onUpdateCard={appMode === 'developer' ? handleUpdateCard : accountCatalog ? handleAccountUpdateCard : undefined}
+            onDeleteCard={appMode === 'developer' ? handleDeleteCard : accountCatalog ? handleAccountDeleteCard : undefined}
+            accountDeck={appMode === 'player' && accountCatalog ? {
+              ownCardIds: accountCatalog.customCards.map((card) => card.id),
+              hiddenCards: hiddenAccountCards,
+              onRestoreCard: handleAccountRestoreCard,
+              onResetToDefault: handleAccountResetDeck,
+              statusMessage: accountDeckMessage,
+            } : undefined}
             progressionConfig={progressionConfig}
             onProgressionConfigChange={appMode === 'developer' ? handleProgressionConfigChange : undefined}
             luxuryProgressionConfig={luxuryProgressionConfig}
@@ -1139,8 +1277,7 @@ export default function App() {
             unlockedCardIds={unlockedCardIds}
             onLogin={async (coupleName, pin) => {
               try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const isKhanh = coupleName.trim().toLowerCase() === 'khanhnhim21102004@gmail.com';
-              const session = await loginCouple(coupleName, pin, isKhanh ? [] : unlockedCardIds);
+              const session = await loginCouple(coupleName, pin, unlockedCardIds);
               setCoupleSession(session);
               setPlayerSession({ loggedIn: true, displayName: session.coupleName });
               const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
@@ -1149,7 +1286,7 @@ export default function App() {
             }}
             onRegister={async (coupleName, pin) => {
               try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const session = await registerCouple(coupleName, pin, []);
+              const session = await registerCouple(coupleName, pin);
               setCoupleSession(session);
               setPlayerSession({ loggedIn: true, displayName: session.coupleName });
               setUnlockedCardIds([]);

@@ -147,7 +147,7 @@ export interface PendingDifficultyBoost {
 }
 
 export interface RewardEvent {
-  kind: 'earned_stars' | 'rerolled_card' | 'queued_difficulty_boost' | 'refunded_difficulty_boost';
+  kind: 'earned_stars' | 'rerolled_card' | 'queued_difficulty_boost' | 'refunded_difficulty_boost' | 'final_card_flips';
   playerIndex: PlayerIndex;
   amount: number;
   round: number;

@@ -14,10 +14,10 @@ import {
   ProgressionConfig,
   TurnAudience,
 } from '../types';
-import { isCardEligibleForOutfits } from './cardSelection';
+import { getRemovalTargetIndices, isCardEligibleForOutfits } from './cardSelection';
 import { chooseDirectedCard, getDirectorWeights, type CardDirectorState } from './cardDirector';
 import { getOutfitStage } from './wardrobe';
-import { ClothingEventType, clothingEffectFamily, getCardClothingFamily, getWardrobeCatchUpTarget, isClothingIntensityAllowed } from './clothingJourney';
+import { ClothingEventType, getCardClothingFamily, isClothingIntensityAllowed } from './clothingJourney';
 
 export const DIFFICULTY_STARS = [1, 2, 3, 4, 5] as const;
 export const POSITION_DIFFICULTY_STARS = [6, 7, 8, 9, 10] as const;
@@ -52,14 +52,34 @@ const WARDROBE_DIFFICULTY_PROFILES: Readonly<Record<
   },
 };
 
-/** Uses the least-clothed player so mixed outfits progress safely. */
+/**
+ * Uses the MOST-clothed player so one player being stripped early (for
+ * example by skip penalties) never pushes the whole table to hotter cards.
+ */
 export const getWardrobeDifficultyProfile = (
   outfits: readonly [OutfitState, OutfitState],
 ): WardrobeDifficultyProfile => {
   const stages = outfits.map(getOutfitStage);
-  if (stages.includes('empty')) return WARDROBE_DIFFICULTY_PROFILES.empty;
+  if (stages.includes('dressed')) return WARDROBE_DIFFICULTY_PROFILES.dressed;
   if (stages.includes('underwear_only')) return WARDROBE_DIFFICULTY_PROFILES.underwear_only;
-  return WARDROBE_DIFFICULTY_PROFILES.dressed;
+  return WARDROBE_DIFFICULTY_PROFILES.empty;
+};
+
+/**
+ * Hard star ceiling driven by intimacy when at least one player is still dressed:
+ * <40% → 3★, <60% → 4★, ≥60% → 5★.
+ * If BOTH players are already in underwear_only (4★) or empty (5★), their
+ * shared wardrobe tier may unlock that tier's maxStars.
+ */
+export const getIntimacyStarCap = (
+  intimacyPercent: number,
+  outfits?: readonly [OutfitState, OutfitState],
+): DifficultyStars => {
+  const intimacyMaxStars: DifficultyStars =
+    intimacyPercent < 40 ? 3 : intimacyPercent < 60 ? 4 : 5;
+  if (!outfits) return intimacyMaxStars;
+  const profileMaxStars = getWardrobeDifficultyProfile(outfits).maxStars;
+  return Math.max(profileMaxStars, intimacyMaxStars) as DifficultyStars;
 };
 
 export const DEFAULT_PROGRESSION_CONFIG: Readonly<ProgressionConfig> = {
@@ -95,9 +115,9 @@ export const DEFAULT_PROGRESSION_CONFIG: Readonly<ProgressionConfig> = {
       starWeights: { 1: 5, 2: 10, 3: 20, 4: 35, 5: 30 },
     },
   ],
-  // A Standard journey is designed to take roughly 20–24 completed cards.
+  // Tuned for a ~70 minute session: roughly 20–22 Standard draws.
   starGains: { 1: 3, 2: 4, 3: 5, 4: 6, 5: 7 },
-  cardRemovalBonus: 8,
+  cardRemovalBonus: 3,
 };
 
 const positionWeights = (
@@ -106,17 +126,35 @@ const positionWeights = (
   POSITION_DIFFICULTY_STARS.map((star) => [star, weights[star] ?? 0]),
 ) as Record<PositionDifficultyStars, number>;
 
+/**
+ * Non-final Position cards stop at 9★; 10★ is reserved for Have Sex, which is
+ * offered through the separate three-card final choice, so no band weights 10★.
+ */
 export const DEFAULT_LUXURY_PROGRESSION_CONFIG: Readonly<LuxuryProgressionConfig> = {
   bands: [
-    { minPercent: 0, maxPercent: 19, starWeights: positionWeights({ 6: 70, 7: 30 }) },
-    { minPercent: 20, maxPercent: 39, starWeights: positionWeights({ 6: 25, 7: 55, 8: 20 }) },
-    { minPercent: 40, maxPercent: 59, starWeights: positionWeights({ 7: 25, 8: 55, 9: 20 }) },
-    { minPercent: 60, maxPercent: 79, starWeights: positionWeights({ 8: 25, 9: 60, 10: 15 }) },
-    { minPercent: 80, maxPercent: 99, starWeights: positionWeights({ 9: 60, 10: 40 }) },
+    { minPercent: 0, maxPercent: 19, starWeights: positionWeights({ 6: 65, 7: 35 }) },
+    { minPercent: 20, maxPercent: 39, starWeights: positionWeights({ 6: 30, 7: 50, 8: 20 }) },
+    { minPercent: 40, maxPercent: 59, starWeights: positionWeights({ 6: 10, 7: 35, 8: 45, 9: 10 }) },
+    { minPercent: 60, maxPercent: 79, starWeights: positionWeights({ 7: 15, 8: 45, 9: 40 }) },
+    { minPercent: 80, maxPercent: 99, starWeights: positionWeights({ 7: 10, 8: 30, 9: 60 }) },
   ],
-  starGains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 6, 7: 8, 8: 10, 9: 12, 10: 0 },
+  // Tuned for a ~70 minute session: roughly 9–10 Position cards before Have Sex.
+  starGains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 9, 7: 10, 8: 11, 9: 12, 10: 0 },
   finalCardChance: 5,
 };
+
+/** Number of face-down Have Sex cards offered at the end of a session. */
+export const FINAL_CHOICE_CARD_COUNT = 3;
+/** Within-tier multiplier for a clothing card matching the active clothing opportunity. */
+export const CLOTHING_PREFERENCE_MULTIPLIER = 1.5;
+/** Within-tier multiplier for a clothing family not yet seen this session. */
+export const UNSEEN_CLOTHING_FAMILY_MULTIPLIER = 1.25;
+/** Within-tier multiplier for a clothing card targeting a player who has not removed anything yet. */
+export const FIRST_REMOVAL_BALANCE_MULTIPLIER = 1.3;
+/** Weight kept by a card the couple account already opened while unopened alternatives exist. */
+export const OPENED_CARD_WEIGHT = 0.1;
+/** Type pacing: the same Truth/Dare type twice in a row lowers that type's next chance. */
+export const REPEATED_TYPE_PACING = 0.58;
 
 const cloneBand = (band: ProgressionBand): ProgressionBand => ({
   minPercent: band.minPercent,
@@ -405,8 +443,8 @@ const starWeightsForAvailable = (
   difficultyBoost = false,
 ): Record<DifficultyStars, number> => {
   const profile = getWardrobeDifficultyProfile(outfits);
-  const intimacyMaxStars: DifficultyStars = intimacyPercent < 20 ? 3 : intimacyPercent < 40 ? 4 : 5;
-  const cappedStars = availableStars.filter((star) => star <= Math.max(profile.maxStars, intimacyMaxStars));
+  const starCap = getIntimacyStarCap(intimacyPercent, outfits);
+  const cappedStars = availableStars.filter((star) => star <= starCap);
   const bandWeights = normalize(DIFFICULTY_STARS, Object.fromEntries(
     DIFFICULTY_STARS.map((star) => [
       star,
@@ -481,13 +519,7 @@ export interface JourneyCardSelectionResult {
 const getJourneyPool = (options: SelectJourneyCardOptions) => {
   const enabledLevels = new Set(options.levels);
   const excluded = new Set(options.excludedCardIds ?? []);
-  const intimacyMaxStars: DifficultyStars = options.intimacyPercent < 20 ? 3 : options.intimacyPercent < 40 ? 4 : 5;
-  const profileMaxStars = getWardrobeDifficultyProfile(options.outfits).maxStars;
-  // Early Standard remains capped at ⭐3; later intimacy can unlock ⭐4/⭐5
-  // without requiring a manual strip step.
-  const wardrobeMaxStars = options.intimacyPercent < 20
-    ? (profileMaxStars <= 3 ? profileMaxStars : Math.min(profileMaxStars, 5))
-    : Math.max(profileMaxStars, intimacyMaxStars);
+  const wardrobeMaxStars = getIntimacyStarCap(options.intimacyPercent, options.outfits);
   const eligible = options.cards.filter(
     (card) => !excluded.has(card.id)
       && enabledLevels.has(card.level)
@@ -496,32 +528,132 @@ const getJourneyPool = (options: SelectJourneyCardOptions) => {
       && isClothingIntensityAllowed(card, options.intimacyPercent)
       && !(getCardClothingFamily(card) === 'both' && options.intimacyPercent < 20),
   );
-  const unseenFamily = options.clothingHistory && options.intimacyPercent >= 20
-    ? eligible.find((card) => getCardClothingFamily(card) && !options.clothingHistory!.includes(getCardClothingFamily(card)!))
-    : undefined;
-  const familyPreference = options.preferredClothingFamily ?? (unseenFamily ? getCardClothingFamily(unseenFamily) : null);
-  const familyPool = familyPreference
-    ? eligible.filter((card) => getCardClothingFamily(card) === familyPreference)
-    : eligible;
-  const familyCandidates = familyPool.length > 0 ? familyPool : eligible;
-  const missingFirstRemoval = options.firstRemoval?.findIndex((removed) => !removed);
-  const balancePool = missingFirstRemoval !== undefined && missingFirstRemoval >= 0
-    ? familyCandidates.filter((card) => {
-      const family = getCardClothingFamily(card);
-      if (family === 'both') return true;
-      const target = family === 'opponent' ? (options.actorIndex === 0 ? 1 : 0) : family === 'self' ? options.actorIndex : null;
-      return target === missingFirstRemoval;
-    })
-    : familyCandidates;
-  const balancedCandidates = balancePool.length > 0 ? balancePool : familyCandidates;
+  // Clothing preferences (active opportunity, unseen family, first-removal
+  // balance) are applied later as gentle within-tier multipliers. They must
+  // never narrow the pool: narrowing used to collapse the draw onto a single
+  // clothing card and the pool reset then served that same card again.
   const pool = options.preferredType
-    ? balancedCandidates.filter((card) => card.type === options.preferredType)
-    : balancedCandidates;
+    ? eligible.filter((card) => card.type === options.preferredType)
+    : eligible;
   const used = new Set(options.usedCardIds);
   let candidates = pool.filter((card) => !used.has(card.id));
   const didResetPool = pool.length > 0 && candidates.length === 0;
   if (didResetPool) candidates = [...pool];
   return { eligible, pool, candidates, didResetPool };
+};
+
+const clothingPreferenceFactor = (
+  card: CardItem,
+  options: SelectJourneyCardOptions,
+): number => {
+  const family = getCardClothingFamily(card);
+  if (!family) return 1;
+  let factor = 1;
+  if (options.preferredClothingFamily) {
+    if (family === options.preferredClothingFamily) factor *= CLOTHING_PREFERENCE_MULTIPLIER;
+  } else if (
+    options.clothingHistory
+    && options.intimacyPercent >= 20
+    && !options.clothingHistory.includes(family)
+  ) {
+    factor *= UNSEEN_CLOTHING_FAMILY_MULTIPLIER;
+  }
+  const missingFirstRemoval = options.firstRemoval?.findIndex((removed) => !removed);
+  if (
+    missingFirstRemoval !== undefined
+    && missingFirstRemoval >= 0
+    && getRemovalTargetIndices(card, options.actorIndex).includes(missingFirstRemoval as PlayerIndex)
+  ) {
+    factor *= FIRST_REMOVAL_BALANCE_MULTIPLIER;
+  }
+  return factor;
+};
+
+const typePacingFactor = (type: CardType, directorState?: CardDirectorState): number => {
+  const lastTwo = directorState?.typeHistory.slice(-2) ?? [];
+  return lastTwo.length === 2 && lastTwo.every((entry) => entry.split(':')[0] === type)
+    ? REPEATED_TYPE_PACING
+    : 1;
+};
+
+interface JourneyWeighting {
+  probabilities: JourneyDrawProbabilities;
+  cardWeights: Map<string, number>;
+}
+
+/**
+ * Director-aware weighting used both for the real draw and for the odds shown
+ * on screen. Each (type, star) tier receives exactly its configured share
+ * (type weight × conditional star weight, with type pacing); the director's
+ * heat, novelty, account-unlock and clothing factors only decide WHICH card of
+ * that tier is drawn. Tiers with many cards therefore no longer crowd out
+ * tiers with few cards.
+ */
+const computeJourneyWeighting = (
+  candidates: readonly CardItem[],
+  options: SelectJourneyCardOptions,
+): JourneyWeighting => {
+  const band = getProgressionBand(options.intimacyPercent, options.config);
+  const preferredType = options.preferredType ?? null;
+  const rawTypes = Object.fromEntries(STANDARD_CARD_TYPES.map((type) => [
+    type,
+    candidates.some((card) => card.type === type) && (!preferredType || preferredType === type)
+      ? band.typeWeights[type] * typePacingFactor(type, options.directorState)
+      : 0,
+  ])) as Record<CardType, number>;
+  const typeShares = normalize(STANDARD_CARD_TYPES, rawTypes);
+  const directorWeights = options.directorState
+    ? getDirectorWeights(
+      candidates,
+      options.directorState,
+      options.actorIndex,
+      options.outfits,
+      options.accountUnlockedCardIds,
+    )
+    : null;
+  const cardWeights = new Map<string, number>();
+
+  for (const type of STANDARD_CARD_TYPES) {
+    if (typeShares[type] <= 0) continue;
+    const typeCards = candidates.filter((card) => card.type === type);
+    const availableStars = DIFFICULTY_STARS.filter((star) =>
+      typeCards.some((card) => deriveDifficultyStars(card) === star),
+    );
+    if (availableStars.length === 0) continue;
+    const conditional = starWeightsForAvailable(
+      availableStars,
+      band,
+      options.outfits,
+      options.intimacyPercent,
+      options.difficultyBoost ?? false,
+    );
+    for (const star of availableStars) {
+      const tierWeight = typeShares[type] * conditional[star];
+      if (!(tierWeight > 0)) continue;
+      const tierCards = typeCards.filter((card) => deriveDifficultyStars(card) === star);
+      const factors = tierCards.map((card) =>
+        Math.max(0.001, directorWeights?.get(card.id) ?? 1) * clothingPreferenceFactor(card, options));
+      const factorTotal = factors.reduce((sum, value) => sum + value, 0);
+      tierCards.forEach((card, index) => {
+        cardWeights.set(card.id, tierWeight * (factors[index] / factorTotal));
+      });
+    }
+  }
+
+  // Re-derive the published odds from the per-card weights so the screen and
+  // the draw can never disagree, even when a type has no weighted star left.
+  const total = Array.from(cardWeights.values()).reduce((sum, value) => sum + value, 0);
+  const types = { truth: 0, dare: 0 } as Record<CardType, number>;
+  const stars = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } as Record<DifficultyStars, number>;
+  if (total > 0) {
+    for (const card of candidates) {
+      const weight = cardWeights.get(card.id);
+      if (!weight) continue;
+      types[card.type] += weight / total;
+      stars[deriveDifficultyStars(card)] += weight / total;
+    }
+  }
+  return { probabilities: { types, stars }, cardWeights };
 };
 
 const probabilitiesForCandidates = (
@@ -571,14 +703,16 @@ export const getJourneyDrawAnalysis = (
   options: SelectJourneyCardOptions,
 ): JourneyDrawAnalysis => {
   const { eligible, pool, candidates } = getJourneyPool(options);
-  const probabilities = probabilitiesForCandidates(
-    candidates,
-    options.intimacyPercent,
-    options.config,
-    options.preferredType ?? null,
-    options.outfits,
-    options.difficultyBoost ?? false,
-  );
+  const probabilities = options.directorState
+    ? computeJourneyWeighting(candidates, options).probabilities
+    : probabilitiesForCandidates(
+      candidates,
+      options.intimacyPercent,
+      options.config,
+      options.preferredType ?? null,
+      options.outfits,
+      options.difficultyBoost ?? false,
+    );
   const availableTypes = STANDARD_CARD_TYPES.filter((type) =>
     probabilities.types[type] > 0 && candidates.some((card) => card.type === type),
   );
@@ -600,7 +734,8 @@ export const getJourneyAvailableTypes = (
 export const selectJourneyCard = (options: SelectJourneyCardOptions): JourneyCardSelectionResult => {
   const random = options.random ?? Math.random;
   const { pool, candidates, didResetPool } = getJourneyPool(options);
-  const probabilities = probabilitiesForCandidates(
+  const weighting = options.directorState ? computeJourneyWeighting(candidates, options) : null;
+  const probabilities = weighting?.probabilities ?? probabilitiesForCandidates(
     candidates,
     options.intimacyPercent,
     options.config,
@@ -633,36 +768,10 @@ export const selectJourneyCard = (options: SelectJourneyCardOptions): JourneyCar
     };
   }
 
-  if (options.directorState) {
-    const band = getProgressionBand(options.intimacyPercent, options.config);
-    const directorWeights = getDirectorWeights(
-      candidates,
-      options.directorState,
-      options.actorIndex,
-      options.outfits,
-      options.accountUnlockedCardIds,
-    );
-    const starWeightsByType = new Map(STANDARD_CARD_TYPES.map((type) => {
-      const typeCards = candidates.filter((card) => card.type === type);
-      const availableStars = DIFFICULTY_STARS.filter((star) =>
-        typeCards.some((card) => deriveDifficultyStars(card) === star),
-      );
-      return [type, starWeightsForAvailable(
-        availableStars,
-        band,
-        options.outfits,
-        options.intimacyPercent,
-        options.difficultyBoost ?? false,
-      )];
-    }));
-    const combinedWeights = new Map(candidates.map((candidate) => {
-      const starWeights = starWeightsByType.get(candidate.type)!;
-      const baseWeight = probabilities.types[candidate.type] * starWeights[deriveDifficultyStars(candidate)];
-      return [candidate.id, baseWeight * (directorWeights.get(candidate.id) ?? 1)];
-    }));
+  if (weighting) {
     const card = chooseDirectedCard(
       candidates,
-      combinedWeights,
+      weighting.cardWeights,
       random,
     );
     if (!card) {
@@ -742,6 +851,10 @@ export interface SelectLuxuryPositionCardOptions {
   usedCardIds: readonly string[];
   luxuryPercent: number;
   config: LuxuryProgressionConfig;
+  /** Couple-account progress: unopened Position and Have Sex cards are preferred. */
+  accountUnlockedCardIds?: readonly string[] | ReadonlySet<string>;
+  /** How many distinct face-down Have Sex cards to offer when the final is due. */
+  finalCandidateCount?: number;
   random?: () => number;
 }
 
@@ -751,8 +864,90 @@ export interface LuxuryPositionSelectionResult {
   didResetPool: boolean;
   probabilities: LuxuryDrawProbabilities;
   missingFinalCard: boolean;
+  /** Present when the Have Sex final is due: distinct cards to offer face down. */
+  finalCandidates?: CardItem[];
   errorCode?: 'no_cards' | 'no_positive_weight' | 'missing_final' | 'no_progress_gain';
 }
+
+const toIdSet = (ids?: readonly string[] | ReadonlySet<string>): ReadonlySet<string> =>
+  ids instanceof Set ? ids : new Set(ids ?? []);
+
+/** Unopened cards keep full weight; opened ones keep 10% while unopened alternatives exist. */
+const pickPreferringUnopened = (
+  cards: readonly CardItem[],
+  unlocked: ReadonlySet<string>,
+  random: () => number,
+): CardItem | null => {
+  if (cards.length === 0) return null;
+  const hasUnopened = cards.some((card) => !unlocked.has(card.id));
+  const weights = new Map(cards.map((card) => [
+    card.id,
+    hasUnopened && unlocked.has(card.id) ? OPENED_CARD_WEIGHT : 1,
+  ] as const));
+  return chooseDirectedCard(cards, weights, random);
+};
+
+/**
+ * Picks distinct Have Sex cards to place face down. Every card has the same
+ * chance regardless of its stars; cards the couple has never opened come first.
+ */
+export const selectFinalChoiceCandidates = (
+  finals: readonly CardItem[],
+  accountUnlockedCardIds?: readonly string[] | ReadonlySet<string>,
+  count: number = FINAL_CHOICE_CARD_COUNT,
+  random: () => number = Math.random,
+): CardItem[] => {
+  const unlocked = toIdSet(accountUnlockedCardIds);
+  const remaining = [...finals];
+  const chosen: CardItem[] = [];
+  while (chosen.length < count && remaining.length > 0) {
+    const pick = pickPreferringUnopened(remaining, unlocked, random);
+    if (!pick) break;
+    chosen.push(pick);
+    remaining.splice(remaining.indexOf(pick), 1);
+  }
+  return chosen;
+};
+
+const positionFamilyKey = (card: CardItem): string =>
+  card.position?.family === 'other'
+    ? `other:${card.position.customLabel?.trim() ?? ''}`
+    : card.position?.family ?? 'other';
+
+/**
+ * Within the drawn star tier, favour the family drawn least often this session
+ * (weight 1 / (1 + draws)²), then favour cards the couple has never opened.
+ */
+const pickBalancedPositionCard = (
+  starPool: readonly CardItem[],
+  sessionCards: readonly CardItem[],
+  unlocked: ReadonlySet<string>,
+  random: () => number,
+): CardItem | null => {
+  if (starPool.length === 0) return null;
+  const drawsByFamily = new Map<string, number>();
+  for (const card of sessionCards) {
+    const family = positionFamilyKey(card);
+    drawsByFamily.set(family, (drawsByFamily.get(family) ?? 0) + 1);
+  }
+  const families = Array.from(new Set(starPool.map(positionFamilyKey)));
+  const familyWeights = families.map((family) => 1 / (1 + (drawsByFamily.get(family) ?? 0)) ** 2);
+  const total = familyWeights.reduce((sum, value) => sum + value, 0);
+  let cursor = safeRandom(random) * total;
+  let chosenFamily = families[families.length - 1];
+  for (let index = 0; index < families.length; index += 1) {
+    cursor -= familyWeights[index];
+    if (cursor < 0) {
+      chosenFamily = families[index];
+      break;
+    }
+  }
+  return pickPreferringUnopened(
+    starPool.filter((card) => positionFamilyKey(card) === chosenFamily),
+    unlocked,
+    random,
+  );
+};
 
 export interface GetLuxuryDrawProbabilitiesOptions {
   cards: readonly CardItem[];
@@ -817,47 +1012,31 @@ const luxuryProbabilitiesForCandidates = (
   const stars = positionWeights({}) as Record<PositionDifficultyStars, number>;
   const normalizedStars = normalize(POSITION_DIFFICULTY_STARS, nonFinalRaw);
   for (const star of POSITION_DIFFICULTY_STARS) stars[star] = normalizedStars[star];
-  const finalHasPositiveWeight = finalCandidates.some(
-    (card) => band.starWeights[derivePositionDifficultyStars(card)] > 0,
-  );
-  const finalCardChance = percent >= 80 && finalHasPositiveWeight
+  // The Have Sex roll no longer depends on star weights: the final is offered
+  // as a separate three-card choice, so any eligible Have Sex card enables it.
+  const finalCardChance = percent >= 80 && finalCandidates.length > 0
     ? config.finalCardChance / 100
     : 0;
   return { stars, finalCardChance };
-};
-
-const choosePositionCardByStarWeight = (
-  cards: readonly CardItem[],
-  band: LuxuryProgressionBand,
-  random: () => number,
-): CardItem | null => {
-  const availableStars = POSITION_DIFFICULTY_STARS.filter((star) =>
-    band.starWeights[star] > 0 && cards.some((card) => derivePositionDifficultyStars(card) === star),
-  );
-  const weights = normalize(POSITION_DIFFICULTY_STARS, band.starWeights);
-  const selectedStar = chooseWeighted(availableStars, weights, random);
-  if (!selectedStar) return null;
-  const pool = cards.filter((card) => derivePositionDifficultyStars(card) === selectedStar);
-  return pool[Math.floor(safeRandom(random) * pool.length)] ?? null;
 };
 
 export const selectLuxuryPositionCard = (
   options: SelectLuxuryPositionCardOptions,
 ): LuxuryPositionSelectionResult => {
   const random = options.random ?? Math.random;
-  const chooseNearestAvailableCard = (
+  const unlocked = toIdSet(options.accountUnlockedCardIds);
+  const finalCount = Math.max(1, Math.floor(options.finalCandidateCount ?? FINAL_CHOICE_CARD_COUNT));
+  const chooseNearestAvailableStar = (
     cards: readonly CardItem[],
     band: LuxuryProgressionBand,
-  ): CardItem | null => {
+  ): PositionDifficultyStars | null => {
     if (cards.length === 0) return null;
     const available = [...new Set(cards.map(derivePositionDifficultyStars))].sort((a, b) => a - b);
     const weightedTarget = available.reduce((best, star) =>
       (band.starWeights[star] > band.starWeights[best] ? star : best), available[0]);
     const target = available.find((star) => star >= weightedTarget) ?? available[available.length - 1];
-    const nearest = available.reduce((best, star) =>
+    return available.reduce((best, star) =>
       Math.abs(star - target) < Math.abs(best - target) ? star : best, available[0]);
-    const pool = cards.filter((card) => derivePositionDifficultyStars(card) === nearest);
-    return pool[Math.floor(safeRandom(random) * pool.length)] ?? null;
   };
   const outfitsReady = options.outfits.every((outfit) => getOutfitStage(outfit) === 'empty');
   const positionCards = options.cards.filter((card) =>
@@ -869,19 +1048,20 @@ export const selectLuxuryPositionCard = (
   );
   const finals = positionCards.filter((card) => card.position?.family === 'have_sex');
   const nonFinalEligible = positionCards.filter((card) => card.position?.family !== 'have_sex');
-  const finalBand = getLuxuryProgressionBand(99, options.config);
-  if (options.luxuryPercent >= 100) {
-    const probabilities = luxuryProbabilitiesForCandidates([], finals, 100, options.config);
-    const finalCard = choosePositionCardByStarWeight(finals, finalBand, random)
-      ?? chooseNearestAvailableCard(finals, finalBand);
+  const offerFinal = (probabilities: LuxuryDrawProbabilities): LuxuryPositionSelectionResult => {
+    const finalCandidates = selectFinalChoiceCandidates(finals, unlocked, finalCount, random);
     return {
-      card: finalCard,
+      card: finalCandidates[0] ?? null,
       nextUsedCardIds: [...new Set(options.usedCardIds)],
       didResetPool: false,
       probabilities,
       missingFinalCard: finals.length === 0,
-      errorCode: finals.length === 0 ? 'missing_final' : finalCard ? undefined : 'no_positive_weight',
+      finalCandidates,
+      errorCode: finals.length === 0 ? 'missing_final' : undefined,
     };
+  };
+  if (options.luxuryPercent >= 100) {
+    return offerFinal(luxuryProbabilitiesForCandidates([], finals, 100, options.config));
   }
   const used = new Set(options.usedCardIds);
   let candidates = nonFinalEligible.filter((card) => !used.has(card.id));
@@ -893,86 +1073,174 @@ export const selectLuxuryPositionCard = (
     options.luxuryPercent,
     options.config,
   );
-  if (!isLuxuryProgressionConfigPlayable(options.config)) {
-    return {
-      card: null,
-      nextUsedCardIds: [...new Set(options.usedCardIds)],
-      didResetPool: false,
-      probabilities,
-      missingFinalCard: false,
-      errorCode: 'no_progress_gain',
-    };
-  }
+  const failure = (errorCode: NonNullable<LuxuryPositionSelectionResult['errorCode']>): LuxuryPositionSelectionResult => ({
+    card: null,
+    nextUsedCardIds: [...new Set(options.usedCardIds)],
+    didResetPool: false,
+    probabilities,
+    missingFinalCard: false,
+    errorCode,
+  });
+  if (!isLuxuryProgressionConfigPlayable(options.config)) return failure('no_progress_gain');
   if (options.luxuryPercent >= 80 && finals.length > 0 && safeRandom(random) < probabilities.finalCardChance) {
-    const finalBandForRoll = getLuxuryProgressionBand(options.luxuryPercent, options.config);
-    const finalCard = choosePositionCardByStarWeight(finals, finalBandForRoll, random)
-      ?? chooseNearestAvailableCard(finals, finalBandForRoll);
-    if (!finalCard) {
-      return {
-        card: null,
-        nextUsedCardIds: [...new Set(options.usedCardIds)],
-        didResetPool: false,
-        probabilities,
-        missingFinalCard: false,
-        errorCode: 'no_positive_weight',
-      };
-    }
-    return {
-      card: finalCard,
-      nextUsedCardIds: [...new Set(options.usedCardIds)],
-      didResetPool: false,
-      probabilities,
-      missingFinalCard: false,
-    };
+    return offerFinal(probabilities);
   }
+  if (candidates.length === 0) return failure('no_cards');
   const weightedStars = POSITION_DIFFICULTY_STARS.filter(
     (star) => probabilities.stars[star] > 0,
   );
-  if (candidates.length === 0) {
-    return {
-      card: null,
-      nextUsedCardIds: [...new Set(options.usedCardIds)],
-      didResetPool: false,
-      probabilities,
-      missingFinalCard: false,
-      errorCode: 'no_cards',
-    };
-  }
   const candidateStars = POSITION_DIFFICULTY_STARS.filter((star) =>
     candidates.some((card) => derivePositionDifficultyStars(card) === star),
   );
-  if (candidateStars.length === 0) {
-    return {
-      card: null,
-      nextUsedCardIds: [...new Set(options.usedCardIds)],
-      didResetPool: false,
-      probabilities,
-      missingFinalCard: false,
-      errorCode: 'no_cards',
-    };
-  }
+  if (candidateStars.length === 0) return failure('no_cards');
   const availableStars = weightedStars.length > 0 ? weightedStars : candidateStars;
   const conditionalWeights = normalize(availableStars, Object.fromEntries(
     availableStars.map((star) => [star, probabilities.stars[star] || 1]),
   ) as Record<PositionDifficultyStars, number>);
   const selectedStar = chooseWeighted(availableStars, conditionalWeights, random)
-    ?? derivePositionDifficultyStars(chooseNearestAvailableCard(candidates, getLuxuryProgressionBand(options.luxuryPercent, options.config))!);
-  if (!selectedStar) {
-    return {
-      card: null,
-      nextUsedCardIds: [...new Set(options.usedCardIds)],
-      didResetPool: false,
-      probabilities,
-      missingFinalCard: false,
-      errorCode: 'no_cards',
-    };
-  }
+    ?? chooseNearestAvailableStar(candidates, getLuxuryProgressionBand(options.luxuryPercent, options.config));
+  if (!selectedStar) return failure('no_cards');
   const starPool = candidates.filter((card) => derivePositionDifficultyStars(card) === selectedStar);
-  const card = starPool[Math.floor(safeRandom(random) * starPool.length)];
+  const cardById = new Map(nonFinalEligible.map((card) => [card.id, card] as const));
+  const sessionCards = options.usedCardIds
+    .map((id) => cardById.get(id))
+    .filter((card): card is CardItem => Boolean(card));
+  const card = pickBalancedPositionCard(starPool, sessionCards, unlocked, random);
+  if (!card) return failure('no_cards');
   const eligibleIds = new Set(nonFinalEligible.map((item) => item.id));
   const nextUsedCardIds = didResetPool
     ? options.usedCardIds.filter((id) => !eligibleIds.has(id))
     : [...options.usedCardIds];
   if (!nextUsedCardIds.includes(card.id)) nextUsedCardIds.push(card.id);
   return { card, nextUsedCardIds, didResetPool, probabilities, missingFinalCard: false };
+};
+
+const weightedAverageStar = <Star extends number>(
+  stars: readonly Star[],
+  weights: Readonly<Record<Star, number>>,
+): number | null => {
+  const normalized = normalize(stars, weights);
+  const total = stars.reduce((sum, star) => sum + normalized[star], 0);
+  if (total <= 0) return null;
+  return stars.reduce((sum, star) => sum + star * normalized[star], 0);
+};
+
+/**
+ * Returns non-blocking warnings when a Standard progression config has
+ * non-monotonic difficulty/Dare curves or assigns weight to empty star tiers.
+ */
+export const validateProgressionConfig = (
+  config: ProgressionConfig,
+  cards?: readonly CardItem[],
+): string[] => {
+  const warnings: string[] = [];
+  const standardCards = cards?.filter((card) => getCardDeck(card) === 'standard');
+  const availableStars = standardCards
+    ? new Set(standardCards.map(deriveDifficultyStars))
+    : null;
+
+  let previousAvgStar: number | null = null;
+  let previousDareRatio: number | null = null;
+
+  for (const band of config.bands) {
+    const label = `${band.minPercent}–${band.maxPercent}%`;
+    const avgStar = weightedAverageStar(DIFFICULTY_STARS, band.starWeights);
+    if (avgStar !== null && previousAvgStar !== null && avgStar + 0.05 < previousAvgStar) {
+      warnings.push(
+        `Mốc ${label} có độ khó sao trung bình (${avgStar.toFixed(2)}★) thấp hơn mốc trước (${previousAvgStar.toFixed(2)}★).`,
+      );
+    }
+    if (avgStar !== null) previousAvgStar = avgStar;
+
+    const normalizedTypes = normalize(STANDARD_CARD_TYPES, band.typeWeights);
+    if (previousDareRatio !== null && normalizedTypes.dare + 0.02 < previousDareRatio) {
+      warnings.push(
+        `Mốc ${label} có tỉ lệ Thử thách (${Math.round(normalizedTypes.dare * 100)}%) giảm so với mốc trước (${Math.round(previousDareRatio * 100)}%).`,
+      );
+    }
+    previousDareRatio = normalizedTypes.dare;
+
+    if (availableStars) {
+      const missingStars = DIFFICULTY_STARS.filter(
+        (star) => band.starWeights[star] > 0 && !availableStars.has(star),
+      );
+      if (missingStars.length > 0) {
+        warnings.push(
+          `Mốc ${label} đặt trọng số cho ${missingStars.map((s) => `${s}★`).join(', ')} nhưng bộ bài Thường không có lá nào ở bậc sao này.`,
+        );
+      }
+    }
+  }
+
+  return warnings;
+};
+
+/**
+ * Returns non-blocking warnings when a Luxury progression config has
+ * non-monotonic star curves, weights on empty non-final star tiers, or
+ * gains so high that the 80–99% Have Sex window is skipped.
+ */
+export const validateLuxuryProgressionConfig = (
+  config: LuxuryProgressionConfig,
+  cards?: readonly CardItem[],
+): string[] => {
+  const warnings: string[] = [];
+  const positionCards = cards?.filter((card) => getCardDeck(card) === 'position' && card.position);
+  const nonFinals = positionCards?.filter((card) => card.position?.family !== 'have_sex');
+  const finals = positionCards?.filter((card) => card.position?.family === 'have_sex');
+  const nonFinalStarSet = nonFinals ? new Set(nonFinals.map(derivePositionDifficultyStars)) : null;
+
+  let previousAvgStar: number | null = null;
+  for (const band of config.bands) {
+    const label = `${band.minPercent}–${band.maxPercent}%`;
+    const activeStars = nonFinalStarSet
+      ? POSITION_DIFFICULTY_STARS.filter((star) => nonFinalStarSet.has(star))
+      : POSITION_DIFFICULTY_STARS;
+    const bandForNonFinals = Object.fromEntries(
+      POSITION_DIFFICULTY_STARS.map((star) => [
+        star,
+        activeStars.includes(star) ? band.starWeights[star] : 0,
+      ]),
+    ) as Record<PositionDifficultyStars, number>;
+    const avgStar = weightedAverageStar(POSITION_DIFFICULTY_STARS, bandForNonFinals)
+      ?? weightedAverageStar(POSITION_DIFFICULTY_STARS, band.starWeights);
+
+    if (avgStar !== null && previousAvgStar !== null && avgStar + 0.05 < previousAvgStar) {
+      warnings.push(
+        `Mốc Luxury ${label} có độ khó trung bình (${avgStar.toFixed(2)}★) lùi xuống thấp hơn mốc trước (${previousAvgStar.toFixed(2)}★).`,
+      );
+    }
+    if (avgStar !== null) previousAvgStar = avgStar;
+
+    if (nonFinalStarSet && band.minPercent < 80) {
+      const emptyWeighted = POSITION_DIFFICULTY_STARS.filter(
+        (star) => band.starWeights[star] > 0 && !nonFinalStarSet.has(star),
+      );
+      if (emptyWeighted.length > 0) {
+        warnings.push(
+          `Mốc Luxury ${label} đặt trọng số cho ${emptyWeighted.map((s) => `${s}★`).join(', ')} nhưng không có lá Tư thế thường nào ở bậc sao này.`,
+        );
+      }
+    }
+
+  }
+  if (finals && finals.length > 0 && finals.length < FINAL_CHOICE_CARD_COUNT) {
+    warnings.push(
+      `Chỉ có ${finals.length} lá Have Sex; màn chọn lá cuối cần ${FINAL_CHOICE_CARD_COUNT} lá úp để người chơi chọn.`,
+    );
+  }
+
+  const nonTenGains = ([6, 7, 8, 9] as const)
+    .map((star) => config.starGains[star])
+    .filter((gain) => gain > 0);
+  const avgGain = nonTenGains.length > 0
+    ? nonTenGains.reduce((sum, val) => sum + val, 0) / nonTenGains.length
+    : 0;
+  if (avgGain > 11) {
+    warnings.push(
+      `Điểm cộng Luxury trung bình (${avgGain.toFixed(1)}%/lá) khá cao, khiến cửa sổ 80–99% chỉ kéo dài 1–2 lượt trước khi chạm 100%.`,
+    );
+  }
+
+  return warnings;
 };

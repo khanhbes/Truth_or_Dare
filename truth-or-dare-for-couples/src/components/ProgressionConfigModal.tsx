@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { RotateCcw, Save, SlidersHorizontal, X } from 'lucide-react';
-import { CardType, DifficultyStars, LuxuryProgressionConfig, PositionDifficultyStars, ProgressionConfig } from '../types';
+import { CardItem, CardType, DifficultyStars, LuxuryProgressionConfig, PositionDifficultyStars, ProgressionConfig } from '../types';
 import {
   DEFAULT_PROGRESSION_CONFIG,
   DEFAULT_LUXURY_PROGRESSION_CONFIG,
@@ -11,6 +11,8 @@ import {
   cloneLuxuryProgressionConfig,
   hydrateLuxuryProgressionConfig,
   hydrateProgressionConfig,
+  validateLuxuryProgressionConfig,
+  validateProgressionConfig,
 } from '../utils/progression';
 
 interface ProgressionConfigModalProps {
@@ -18,6 +20,7 @@ interface ProgressionConfigModalProps {
   onChange: (config: ProgressionConfig) => void;
   luxuryConfig: LuxuryProgressionConfig;
   onLuxuryChange: (config: LuxuryProgressionConfig) => void;
+  cards?: readonly CardItem[];
   onClose: () => void;
 }
 
@@ -33,6 +36,7 @@ export const ProgressionConfigModal: React.FC<ProgressionConfigModalProps> = ({
   onChange,
   luxuryConfig,
   onLuxuryChange,
+  cards,
   onClose,
 }) => {
   const reduceMotion = useReducedMotion();
@@ -40,6 +44,9 @@ export const ProgressionConfigModal: React.FC<ProgressionConfigModalProps> = ({
   const [luxuryDraft, setLuxuryDraft] = useState(() => cloneLuxuryProgressionConfig(luxuryConfig));
   const [activeTrack, setActiveTrack] = useState<'standard' | 'luxury'>('standard');
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const standardWarnings = validateProgressionConfig(draft, cards);
+  const luxuryWarnings = validateLuxuryProgressionConfig(luxuryDraft, cards);
+  const activeWarnings = activeTrack === 'standard' ? standardWarnings : luxuryWarnings;
 
   const isValid = draft.bands.every((band) =>
     TYPE_KEYS.some((type) => Number.isFinite(band.typeWeights[type]) && band.typeWeights[type] > 0) &&
@@ -337,6 +344,16 @@ export const ProgressionConfigModal: React.FC<ProgressionConfigModalProps> = ({
             <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
               Trọng số phải trong 0–100 và mỗi hàng cần ít nhất một lựa chọn lớn hơn 0. Điểm Tim hồng và điểm Luxury 1–9★ không được đồng thời bằng 0.
             </p>
+          )}
+          {activeWarnings.length > 0 && (
+            <div role="status" className="space-y-1 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-100">
+              <p className="font-semibold text-amber-200">Gợi ý cân bằng nhịp tăng dần:</p>
+              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-amber-100/90">
+                {activeWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
 

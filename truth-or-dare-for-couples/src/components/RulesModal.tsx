@@ -289,7 +289,7 @@ const PositionUnlockGraphic: React.FC = () => (
       <circle cx="280" cy="70" r="35" fill="#21190f" stroke="#f59e0b" strokeOpacity=".35" />
       <path d="M264 68h32M268 56h24M271 80h18" stroke="#fcd34d" strokeWidth="2.2" strokeLinecap="round" />
       <text x="280" y="124" fill="#fde68a" fontSize="10.2" fontWeight="800" textAnchor="middle">TRANG PHỤC</text>
-      <text x="280" y="140" fill="#a8a29e" fontSize="9" textAnchor="middle">Đủ điều kiện</text>
+      <text x="280" y="140" fill="#a8a29e" fontSize="9" textAnchor="middle">Đã cởi hết</text>
     </g>
 
     <path d="M322 70H394" stroke="#a8a29e" strokeWidth="1.5" strokeDasharray="5 6" />
@@ -356,9 +356,9 @@ const OverviewTab: React.FC = () => (
 
     {/* Quick stats */}
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      <InfoPill icon="🎴" label="Tổng bài" value="108 lá" color="#fda4af" />
-      <InfoPill icon="📦" label="Standard" value="92 lá" color="#fde68a" />
-      <InfoPill icon="🔮" label="Position" value="16 lá" color="#93c5fd" />
+      <InfoPill icon="⏱️" label="Một ván" value="~70 phút" color="#fda4af" />
+      <InfoPill icon="📦" label="Tim Hồng" value="Truth & Dare" color="#fde68a" />
+      <InfoPill icon="🔮" label="Tư thế" value="✦6 – ✦9" color="#93c5fd" />
       <InfoPill icon="⭐" label="Cấp sao" value="★1 – ★5" color="#fcd34d" />
     </div>
 
@@ -369,9 +369,9 @@ const OverviewTab: React.FC = () => (
         {[
           { step: '1', text: 'Thiết lập: Nhập tên, chọn avatar, tùy chỉnh cấp độ & trang phục', color: '#fb7185' },
           { step: '2', text: 'Rút bài: Chọn ngẫu nhiên hoặc tự bấm Truth / Dare', color: '#fcd34d' },
-          { step: '3', text: 'Hoàn thành hoặc Bỏ qua (có thể bị phạt cởi 1 món đồ nếu bật)', color: '#fda4af' },
-          { step: '4', text: 'Tăng dần Intimacy 0% → 100% → Mở khóa Position Deck', color: '#93c5fd' },
-          { step: '5', text: 'Kết thúc khi rút lá Have Sex, đạt mục tiêu, hoặc chủ động dừng', color: '#34d399' },
+          { step: '3', text: 'Hoàn thành hoặc Bỏ qua (từ 20% Tim Hồng, bỏ qua có thể bị phạt cởi 1 món nếu bật)', color: '#fda4af' },
+          { step: '4', text: 'Tim Hồng 0% → 100%, mọi món đồ được cởi qua lá bài → mở bộ Tư thế', color: '#93c5fd' },
+          { step: '5', text: 'Chọn 1 trong 3 lá Have Sex úp để khép ván, hoặc chủ động dừng bất cứ lúc nào', color: '#34d399' },
         ].map(({ step, text, color }) => (
           <div key={step} className="flex items-start gap-2.5">
             <span
@@ -397,7 +397,7 @@ const LevelsTab: React.FC = () => (
         name: 'Nhẹ Nhàng',
         eng: 'Gentle',
         stars: '⭐1 – ⭐2',
-        cards: '32 lá (16 Truth + 16 Dare)',
+        cards: 'Truth + Dare khởi động',
         color: '#FF6B9D',
         bg: '#26131b',
         border: 'rgba(255, 107, 157, 0.35)',
@@ -409,7 +409,7 @@ const LevelsTab: React.FC = () => (
         name: 'Thân Mật',
         eng: 'Intimate',
         stars: '⭐2 – ⭐4',
-        cards: '32 lá (16 Truth + 16 Dare)',
+        cards: 'Truth + Dare chạm nhẹ',
         color: '#D4AF37',
         bg: '#20180f',
         border: 'rgba(212, 175, 55, 0.35)',
@@ -421,7 +421,7 @@ const LevelsTab: React.FC = () => (
         name: 'Nồng Nhiệt',
         eng: 'Passionate',
         stars: '⭐3 – ⭐5',
-        cards: '28 lá (14 Truth + 14 Dare)',
+        cards: 'Truth + Dare táo bạo',
         color: '#fb7185',
         bg: '#2d0c13',
         border: 'rgba(251, 113, 133, 0.35)',
@@ -464,7 +464,7 @@ const LevelsTab: React.FC = () => (
     <SectionCard
       eyebrow="Tỉ lệ biến thiên"
       title="Truth / Dare thay đổi theo Intimacy"
-      description="Ban đầu ưu tiên câu hỏi (70% Truth). Càng thân mật, Dare tăng dần lên 80%."
+      description="Ban đầu ưu tiên câu hỏi (65% Truth). Càng thân mật, Dare tăng dần lên 75%. Đây là cấu hình mặc định, Admin có thể chỉnh."
       accentColor="#f59e0b"
     >
       <div className="overflow-x-auto">
@@ -479,11 +479,11 @@ const LevelsTab: React.FC = () => (
           </thead>
           <tbody className="text-neutral-300">
             {[
-              { range: '0–19%', truth: '70%', dare: '30%', stars: '⭐1 (65%)' },
-              { range: '20–39%', truth: '60%', dare: '40%', stars: '⭐1-2 (75%)' },
-              { range: '40–59%', truth: '45%', dare: '55%', stars: '⭐2-3 (65%)' },
-              { range: '60–79%', truth: '30%', dare: '70%', stars: '⭐3-4 (65%)' },
-              { range: '80–99%', truth: '20%', dare: '80%', stars: '⭐4-5 (80%)' },
+              { range: '0–19%', truth: '65%', dare: '35%', stars: '⭐1 (70%)' },
+              { range: '20–39%', truth: '55%', dare: '45%', stars: '⭐1-2 (80%)' },
+              { range: '40–59%', truth: '45%', dare: '55%', stars: '⭐2-3 (60%)' },
+              { range: '60–79%', truth: '35%', dare: '65%', stars: '⭐3-4 (60%)' },
+              { range: '80–99%', truth: '25%', dare: '75%', stars: '⭐4-5 (65%)' },
             ].map((row) => (
               <tr key={row.range} className="border-b border-white/[0.03]">
                 <td className="py-1.5 pr-2 font-semibold text-white">{row.range}</td>
@@ -529,7 +529,7 @@ const ProgressionTab: React.FC = () => (
       </div>
       <div className="mt-3 rounded-lg bg-amber-500/[0.08] px-3 py-2">
         <p className="text-[11px] text-amber-200">
-          <strong className="font-bold">Bonus trang phục:</strong> Mỗi lượt có cởi đồ thành công → thêm <strong>+2%</strong> Intimacy.
+          <strong className="font-bold">Bonus trang phục:</strong> Mỗi lượt có cởi đồ thành công → thêm <strong>+3%</strong> Tim Hồng.
         </p>
       </div>
     </div>
@@ -538,20 +538,18 @@ const ProgressionTab: React.FC = () => (
     <SectionCard
       eyebrow="Giai đoạn 2"
       title="Hành Trình Tư Thế (Luxury 0% → 100%)"
-      description="Mở khóa bộ bài Position 16 lá. Thang sao ✦1–✦10 với độ khó tăng dần."
+      description="Mở khóa bộ Tư thế. Thang sao ✦6–✦9 tăng dần, các nhóm tư thế và lượt Nam/Nữ được chia đều. Mỗi ván khép lại bằng đúng 1 lá Have Sex."
       accentColor="#60a5fa"
     >
       <div className="space-y-3">
         {/* Position star gains */}
-        <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
+        <div className="grid grid-cols-5 gap-1.5">
           {[
-            { star: 1, gain: '+6%' }, { star: 2, gain: '+7%' }, { star: 3, gain: '+8%' },
-            { star: 4, gain: '+9%' }, { star: 5, gain: '+10%' }, { star: 6, gain: '+11%' },
-            { star: 7, gain: '+12%' }, { star: 8, gain: '+13%' }, { star: 9, gain: '+14%' },
-            { star: 10, gain: '🏆' },
+            { star: '✦6', gain: '+9%' }, { star: '✦7', gain: '+10%' }, { star: '✦8', gain: '+11%' },
+            { star: '✦9', gain: '+12%' }, { star: 'Have Sex', gain: '🏆' },
           ].map(({ star, gain }) => (
             <div key={star} className="flex flex-col items-center rounded-lg border border-white/[0.05] bg-black/20 py-1.5">
-              <span className="text-[10px] font-black text-blue-200">✦{star}</span>
+              <span className="text-[10px] font-black text-blue-200">{star}</span>
               <span className="text-[9px] font-bold text-neutral-400">{gain}</span>
             </div>
           ))}
@@ -559,10 +557,13 @@ const ProgressionTab: React.FC = () => (
 
         {/* Have Sex mechanic */}
         <div className="rounded-xl border border-rose-400/20 bg-rose-500/[0.06] px-3 py-2.5">
-          <p className="text-xs font-semibold text-rose-200">◆ Lá Tối Thượng: Have Sex (✦10)</p>
+          <p className="text-xs font-semibold text-rose-200">◆ Lá Tối Thượng: Have Sex — chọn 1 trong 3 lá úp</p>
           <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">
-            Luxury 80–99% → <strong className="text-white">5%</strong> cơ hội mỗi lượt rút.
-            Luxury 100% → <strong className="text-white">100%</strong> chắc chắn xuất hiện.
+            Tư thế 80–99% → <strong className="text-white">5%</strong> cơ hội mỗi lượt mở màn chọn lá cuối.
+            Tư thế 100% → <strong className="text-white">chắc chắn</strong> mở. Ba lá Have Sex được úp, ưu tiên lá hai bạn chưa mở.
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">
+            Muốn xem trước? Tiêu <strong className="text-white">10★</strong> để lật 2 lá hoặc <strong className="text-white">20★</strong> để lật cả 3, rồi chọn 1 lá.
           </p>
         </div>
       </div>
@@ -572,7 +573,7 @@ const ProgressionTab: React.FC = () => (
     <SectionCard
       eyebrow="Điều kiện mở khóa"
       title="Ba bước chuyển sang Position"
-      description="Standard 100% + Đủ điều kiện trang phục + Cả hai đồng ý."
+      description="Tim Hồng 100% + Cả hai đã cởi hết đồ qua lá bài + Cả hai đồng ý."
       accentColor="#60a5fa"
     >
       <PositionUnlockGraphic />
@@ -635,7 +636,7 @@ const WardrobeTab: React.FC = () => (
         {[
           { icon: '👤', name: 'Tự cởi (self)', desc: 'Bạn tự chọn 1 món đồ hợp lệ của mình để cởi.' },
           { icon: '👫', name: 'Cởi cho đối phương (opponent)', desc: 'Chọn 1 món trên người đối phương để họ cởi.' },
-          { icon: '🤝', name: 'Cả hai cùng cởi (both)', desc: 'Mỗi người tự tháo 1 món đồ ngoài.' },
+          { icon: '🤝', name: 'Cả hai cùng cởi (both)', desc: 'Mỗi người cùng bỏ 1 món đồ hợp lệ.' },
           { icon: '🎯', name: 'Cùng chọn người cởi (choice)', desc: 'Cặp đôi thỏa thuận ai sẽ cởi 1 món.' },
           { icon: '🔄', name: 'Đổi đồ cho nhau (swap)', desc: 'Cùng tháo 1 món rồi đổi mặc cho nhau!' },
         ].map((effect) => (
@@ -650,11 +651,20 @@ const WardrobeTab: React.FC = () => (
       </div>
     </SectionCard>
 
+    {/* Every garment comes off through a card */}
+    <div className="rounded-2xl border border-rose-400/20 bg-rose-500/[0.04] px-4 py-3">
+      <p className="text-xs font-semibold text-rose-200">👗 Mọi món đồ đều được cởi qua lá bài</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">
+        Lá cởi đồ xuất hiện ngẫu nhiên từ khoảng 20% Tim Hồng, đồ ngoài trước rồi đến đồ lót. Nếu gần cuối vẫn còn đồ,
+        lá Dare kế tiếp sẽ có dải <strong className="text-white">"Kèm theo: …"</strong> để cởi nốt. Bộ Tư thế chỉ mở khi cả hai đã cởi hết.
+      </p>
+    </div>
+
     {/* Penalty */}
     <div className="rounded-2xl border border-amber-400/20 bg-amber-500/[0.04] px-4 py-3">
       <p className="text-xs font-semibold text-amber-200">⚡ Luật phạt trang phục (tùy chọn)</p>
       <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">
-        Khi bật trong Thiết lập, nếu bạn chọn <strong className="text-white">"Bỏ qua"</strong> thẻ bài, bạn phải cởi 1 món đồ hợp lệ để chuộc lỗi.
+        Khi bật trong Thiết lập, từ <strong className="text-white">20% Tim Hồng</strong> trở đi, nếu bạn chọn <strong className="text-white">"Bỏ qua"</strong> thẻ bài, bạn cởi 1 món đồ hợp lệ để chuộc lỗi. Trước mốc này bỏ qua không bị phạt.
       </p>
     </div>
   </div>
@@ -713,6 +723,23 @@ const RewardsTab: React.FC = () => (
         </p>
       </div>
     </div>
+
+    {/* Have Sex flips */}
+    <div className="rounded-2xl border border-violet-400/25 bg-violet-500/[0.05] p-4">
+      <div className="mb-3 flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-500/15">
+          <span className="text-xl">🂠</span>
+        </div>
+        <div>
+          <p className="text-sm font-bold text-violet-200">Lật lá Have Sex</p>
+          <p className="text-[10px] font-bold text-violet-300">Chi phí: 10 ⭐ (2 lá) · 20 ⭐ (cả 3 lá)</p>
+        </div>
+      </div>
+      <p className="text-xs leading-relaxed text-neutral-300">
+        Ở màn chọn lá cuối, hai bạn dùng <strong className="text-white">ví chung</strong>: trừ sao của người đang tới lượt trước, thiếu thì trừ tiếp của người kia.
+        Đã lật 2 lá thì chỉ cần thêm 10 ⭐ để lật lá còn lại.
+      </p>
+    </div>
   </div>
 );
 
@@ -728,7 +755,7 @@ const ConsentTab: React.FC = () => (
         {
           icon: '🛑',
           title: 'Quyền dừng tuyệt đối',
-          desc: 'Bất kỳ lúc nào, bất kỳ ai cũng có thể nói "Dừng" hoặc bấm nút Bỏ qua mà không cần giải thích lý do.',
+          desc: 'Bất kỳ lúc nào, bất kỳ ai cũng có thể nói "Dừng" hoặc bấm Bỏ qua mà không cần giải thích. Lá có đồng hồ vẫn bỏ qua được trước khi bấm đếm giờ.',
           color: '#fb7185',
         },
         {
@@ -765,13 +792,12 @@ const ConsentTab: React.FC = () => (
     </div>
 
     {/* Game end conditions */}
-    <SectionCard eyebrow="Kết thúc ván" title="4 cách kết thúc trò chơi" accentColor="#34d399">
+    <SectionCard eyebrow="Kết thúc ván" title="3 cách kết thúc trò chơi" accentColor="#34d399">
       <div className="space-y-1.5">
         {[
-          { icon: '🏆', text: 'Rút trúng lá bài Have Sex (✦10) — đỉnh cao thăng hoa' },
-          { icon: '💗', text: 'Hoàn thành 100% Tim Hồng và chọn dừng lại (không vào Position)' },
-          { icon: '🎯', text: 'Đạt đủ số vòng mục tiêu đã cài trong Thiết lập' },
-          { icon: '⏹️', text: 'Người chơi chủ động bấm nút "Kết thúc ván" bất cứ lúc nào' },
+          { icon: '🏆', text: 'Chọn 1 trong 3 lá Have Sex úp — đỉnh cao của ván' },
+          { icon: '💗', text: 'Hoàn thành 100% Tim Hồng và chọn dừng lại (không vào Tư thế)' },
+          { icon: '⏹️', text: 'Bấm nút "Kết thúc ván" bất cứ lúc nào' },
         ].map((item) => (
           <div key={item.text} className="flex items-center gap-2.5 rounded-lg bg-black/15 px-3 py-2">
             <span className="text-sm">{item.icon}</span>

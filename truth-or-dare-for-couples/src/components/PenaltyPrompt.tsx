@@ -9,6 +9,8 @@ interface PenaltyPromptProps {
   cardType: CardType;
   penaltyEnabled: boolean;
   canRemoveGarment: boolean;
+  /** Shown instead of the garment option when the clothing penalty is temporarily locked. */
+  lockedReason?: string;
   onReturn: () => void;
   onChooseGarment: () => void;
   onContinueWithoutPenalty: () => void;
@@ -29,6 +31,7 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
   cardType,
   penaltyEnabled,
   canRemoveGarment,
+  lockedReason,
   onReturn,
   onChooseGarment,
   onContinueWithoutPenalty,
@@ -82,9 +85,11 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
   const reason = cardType === 'truth'
     ? 'Nếu cả hai xác nhận câu trả lời là sai hoặc người chơi không muốn trả lời, có thể áp dụng luật phạt đã thống nhất.'
     : 'Nếu thử thách chưa được thực hiện, có thể áp dụng luật phạt đã thống nhất.';
-  const canChooseGarment = penaltyEnabled && canRemoveGarment;
+  const canChooseGarment = penaltyEnabled && canRemoveGarment && !lockedReason;
   const statusCopy = !penaltyEnabled
     ? 'Luật phạt cởi đồ đang tắt trong thiết lập. Lượt này sẽ chỉ được ghi nhận là bỏ qua.'
+    : lockedReason
+      ? lockedReason
     : !canRemoveGarment
       ? `${playerName} không còn món đồ nào có thể bỏ. Hai bạn có thể thống nhất một phương án thay thế hoặc tiếp tục.`
       : `${playerName} có thể chọn một món đồ đang được phép bỏ. Bạn vẫn có thể không áp dụng luật phạt.`;

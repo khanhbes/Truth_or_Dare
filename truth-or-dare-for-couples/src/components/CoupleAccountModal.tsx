@@ -34,7 +34,7 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
   onClose,
   onRefreshUnlocked,
 }) => {
-  const [coupleName, setCoupleName] = useState(coupleSession?.coupleName || 'khanhnhim21102004@gmail.com');
+  const [coupleName, setCoupleName] = useState(coupleSession?.coupleName || '');
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -64,25 +64,15 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
     }
   };
 
-  const handleQuickLoginKhanh = async () => {
-    setBusy(true);
-    setError(null);
-    setSuccessNotice(null);
-    try {
-      await onLogin('khanhnhim21102004@gmail.com', '');
-      setSuccessNotice('Đã đăng nhập thành công vào khanhnhim21102004@gmail.com!');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể đăng nhập.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleFormSubmit = async (e: React.FormEvent, isRegister: boolean = false) => {
     e.preventDefault();
     const name = coupleName.trim();
     if (!name || name.length < 2) {
       setError('Vui lòng nhập email hoặc tên cặp đôi (tối thiểu 2 ký tự).');
+      return;
+    }
+    if (!/^[0-9]{4,8}$/.test(pin.trim())) {
+      setError('Mã PIN phải gồm từ 4 đến 8 chữ số.');
       return;
     }
     setBusy(true);
@@ -223,18 +213,9 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
             </div>
           ) : (
             <div className="mt-3 border-t border-white/10 pt-3">
-              <p className="text-[11px] text-neutral-400 mb-2.5">
-                Lưu toàn bộ {unlockedCardIds.length} thẻ đang có vào tài khoản của bạn:
+              <p className="text-[11px] leading-relaxed text-neutral-400">
+                Đăng nhập hoặc tạo tài khoản bên dưới để lưu {unlockedCardIds.length} thẻ đang có và dùng bộ thẻ riêng của hai bạn.
               </p>
-              <button
-                type="button"
-                onClick={handleQuickLoginKhanh}
-                disabled={busy}
-                className="flex w-full min-h-10 items-center justify-center gap-2 rounded-xl border border-amber-400/40 bg-gradient-to-r from-amber-500/25 to-rose-500/25 px-3 py-2 text-xs font-bold text-amber-100 transition-all hover:border-amber-300 disabled:opacity-50"
-              >
-                <Sparkles className="h-3.5 w-3.5 text-amber-300" />
-                Đăng nhập & Lưu vào "khanhnhim21102004@gmail.com"
-              </button>
             </div>
           )}
         </div>
@@ -257,22 +238,24 @@ export const CoupleAccountModal: React.FC<CoupleAccountModalProps> = ({
               type="text"
               value={coupleName}
               onChange={(e) => setCoupleName(e.target.value)}
-              placeholder="khanhnhim21102004@gmail.com"
+              placeholder="email-cua-ban@gmail.com hoặc tên cặp đôi"
               className="mt-1 min-h-10 w-full rounded-xl border border-white/12 bg-white/[0.04] px-3 text-xs text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400 focus:ring-1 focus:ring-rose-400/30"
             />
           </div>
 
           <div>
             <label htmlFor="modal-couple-pin" className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-              Mã PIN (Tùy chọn)
+              Mã PIN (4–8 chữ số)
             </label>
             <div className="relative mt-1">
               <input
                 id="modal-couple-pin"
                 type="password"
                 value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                placeholder="Để trống nếu không đặt mã PIN"
+                inputMode="numeric"
+                maxLength={8}
+                onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="Nhập mã PIN"
                 className="min-h-10 w-full rounded-xl border border-white/12 bg-white/[0.04] pl-3 pr-8 text-xs text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400 focus:ring-1 focus:ring-rose-400/30"
               />
               <KeyRound className="pointer-events-none absolute right-2.5 top-2.5 h-3.5 w-3.5 text-neutral-500" />

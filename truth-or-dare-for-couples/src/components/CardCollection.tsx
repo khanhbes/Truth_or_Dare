@@ -47,6 +47,7 @@ import { CARD_ICON_NAMES, autoAssignIcon, getCardIcon } from './CardIcons';
 import { ProgressionConfigModal } from './ProgressionConfigModal';
 import { deriveDifficultyStars, derivePositionDifficultyStars, getCardDeck, getCardTurnAudience, POSITION_DIFFICULTY_STARS } from '../utils/progression';
 import { compareCollectionCards } from '../utils/cardOrdering';
+import { isCardFrame } from '../utils/cardFrames';
 import type { CatalogSyncStatus } from '../utils/cloudCatalog';
 import type { AdminPlayerStats } from '../utils/playerSession';
 
@@ -86,11 +87,23 @@ export interface CardCollectionProps {
   onCreateCloudBackup?: () => Promise<string>;
   coupleName?: string;
   onOpenAccountModal?: () => void;
+  /**
+   * Player mode with a couple account: the account owns its deck. It can add
+   * and edit its own cards, remove (hide) any card except Have Sex, restore
+   * hidden cards one by one, or reset the deck to the default catalog.
+   */
+  accountDeck?: {
+    ownCardIds: readonly string[];
+    hiddenCards: CardItem[];
+    onRestoreCard: (cardId: string) => void;
+    onResetToDefault: () => void;
+    statusMessage?: string | null;
+  };
   onBack: () => void;
 }
 
 type ClothingEffectSelection = 'none' | 'self' | 'opponent' | 'male' | 'female' | 'both' | 'swap';
-type CollectionTab = 'all' | 'truth' | 'dare' | 'favorites' | CardLevel;
+type CollectionTab = 'all' | 'truth' | 'dare' | 'favorites' | 'frames' | CardLevel;
 type StageSelection = 'any' | OutfitStage;
 type CardTimerMode = 'inherit' | 'disabled' | 'custom';
 
@@ -348,6 +361,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   onCreateCloudBackup,
   coupleName,
   onOpenAccountModal,
+  accountDeck,
   onBack,
 }) => {
   const prefersReducedMotion = useReducedMotion();
@@ -512,6 +526,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
       : 'drop-shadow(0 0 8px rgba(224,145,158,0.48))';
 
   const isDeveloper = mode === 'developer';
+  const canAuthor = isDeveloper || Boolean(accountDeck);
+  const ownCardIdSet = useMemo(() => new Set(accountDeck?.ownCardIds ?? []), [accountDeck?.ownCardIds]);
+  const canEditCard = (card: CardItem) => isDeveloper || ownCardIdSet.has(card.id);
+  const canDeleteCard = (card: CardItem) =>
+    Boolean(onDeleteCard) && canAuthor && card.position?.family !== 'have_sex';
+  const frameCount = isDeveloper ? cards.filter(isCardFrame).length : 0;
+  const [showHiddenCards, setShowHiddenCards] = useState(false);
+  const [confirmDeckReset, setConfirmDeckReset] = useState(false);
   const unlockedCardIdSet = useMemo(
     () => new Set(
       unlockedCardIds === undefined ? cards.map((card) => card.id) : unlockedCardIds,
@@ -549,6 +571,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
       if (activeTab === 'truth') return card.type === 'truth';
       if (activeTab === 'dare') return card.type === 'dare';
       if (activeTab === 'favorites') return visibleFavorites.includes(card.id);
+      if (activeTab === 'frames') return isCardFrame(card);
       return card.level === activeTab;
     })
     .filter((card) => deckFilter === 'all' || getCardDeck(card) === deckFilter)
@@ -683,7 +706,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
 
   useEffect(() => {
     if (isDeveloper) return;
-    if (isAdding) {
+    if (isAdding && !accountDeck) {
       setIsAdding(false);
       resetEditor();
     }
@@ -691,7 +714,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
       setSelectedCard(null);
       setPendingDeleteCardId(null);
     }
-  }, [isDeveloper, isAdding, resetEditor, selectedCard, unlockedCardIdSet]);
+  }, [isDeveloper, accountDeck, isAdding, resetEditor, selectedCard, unlockedCardIdSet]);
 
   useEffect(() => {
     if (!selectedCard && !isAdding) return;
@@ -764,7 +787,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         : storedEffect?.kind === 'remove_garment'
           ? cardDeck === 'position'
             ? (storedEffect.target === 'male' || storedEffect.target === 'female' || storedEffect.target === 'both' ? storedEffect.target : 'none')
-            : (storedEffect.target === 'self' || storedEffect.target === 'opponent' ? storedEffect.target : 'none')
+            : (storedEffect.target === 'self' || storedEffect.target === 'opponent' || storedEffect.target === 'both' ? storedEffect.target : 'none')
           : 'none';
     setEditingCard(card);
     setCustomType(card.type);
@@ -823,7 +846,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
     soundEngine.playCompleteSound();
     const nextCard: CardItem = {
       ...editingCard,
-      id: editingCard?.id || `custom-${Date.now()}`,
+      id: editingCard?.id || (accountDeck && !isDeveloper ? `acct-${Date.now()}` : `custom-${Date.now()}`),
       type: customDeck === 'position' ? 'dare' : customType,
       level: customDeck === 'position' ? 'passionate' : customLevel,
       content: customContent.trim(),
@@ -892,7 +915,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   };
 
   const handleConfirmDelete = () => {
-    if (!isDeveloper || !selectedCard || !onDeleteCard) return;
+    if (!selectedCard || !onDeleteCard || !canDeleteCard(selectedCard)) return;
     soundEngine.playTick();
     onDeleteCard(selectedCard);
     setPendingDeleteCardId(null);
@@ -978,6 +1001,21 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             >
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
               <span className="hidden sm:inline max-w-[120px] truncate">{coupleName || 'Tài khoản'}</span>
+            </button>
+          )}
+
+          {!isDeveloper && accountDeck && (
+            <button
+              type="button"
+              aria-label="Thêm thẻ riêng của tài khoản"
+              onClick={() => {
+                soundEngine.playTick();
+                openCreateEditor();
+              }}
+              className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-full bg-rose-600/80 px-3 text-xs font-semibold text-white shadow-md transition-all hover:bg-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 motion-reduce:transition-none"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden md:inline">Thêm thẻ riêng</span>
             </button>
           )}
 
@@ -1102,6 +1140,87 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         </section>
       )}
 
+      {!isDeveloper && accountDeck && (
+        <section
+          aria-label="Bộ thẻ của tài khoản"
+          className="mx-auto mb-6 w-full max-w-2xl rounded-2xl border border-rose-400/20 bg-rose-950/20 p-4"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-rose-100">Bộ thẻ của {coupleName || 'tài khoản'}</h3>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-400">
+                {accountDeck.ownCardIds.length} thẻ tự thêm · {accountDeck.hiddenCards.length} thẻ đã xóa khỏi bộ. Thay đổi chỉ áp dụng cho tài khoản này.
+              </p>
+              {accountDeck.statusMessage && (
+                <p className="mt-1 text-[11px] text-amber-200" aria-live="polite">{accountDeck.statusMessage}</p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {accountDeck.hiddenCards.length > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showHiddenCards}
+                  onClick={() => setShowHiddenCards((value) => !value)}
+                  className="min-h-10 rounded-full border border-white/15 px-3 text-xs font-semibold text-neutral-200 hover:border-white/30 hover:text-white"
+                >
+                  {showHiddenCards ? 'Ẩn danh sách đã xóa' : 'Xem thẻ đã xóa'}
+                </button>
+              )}
+              {!confirmDeckReset ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeckReset(true)}
+                  disabled={accountDeck.ownCardIds.length === 0 && accountDeck.hiddenCards.length === 0}
+                  className="min-h-10 rounded-full border border-amber-300/30 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Khôi phục bộ thẻ mặc định
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-red-400/30 bg-neutral-950/80 px-3 py-2" role="alertdialog" aria-label="Xác nhận khôi phục bộ thẻ">
+                  <span className="text-[11px] text-neutral-300">Xóa thẻ tự thêm và hiện lại thẻ đã xóa? Tiến trình đã mở được giữ nguyên.</span>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeckReset(false)}
+                    className="min-h-9 rounded-full border border-neutral-700 px-3 text-[11px] font-semibold text-neutral-300"
+                  >
+                    Giữ lại
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmDeckReset(false);
+                      setShowHiddenCards(false);
+                      accountDeck.onResetToDefault();
+                    }}
+                    className="min-h-9 rounded-full bg-red-500/90 px-3 text-[11px] font-bold text-white"
+                  >
+                    Khôi phục
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          {showHiddenCards && accountDeck.hiddenCards.length > 0 && (
+            <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto border-t border-white/10 pt-3" aria-label="Thẻ đã xóa khỏi bộ">
+              {accountDeck.hiddenCards.map((card) => (
+                <li key={card.id} className="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
+                  <span className="min-w-0 truncate text-[11px] text-neutral-300">
+                    {unlockedCardIdSet.has(card.id) ? card.content : 'Lá chưa mở khóa'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => accountDeck.onRestoreCard(card.id)}
+                    className="min-h-9 shrink-0 rounded-full border border-emerald-300/30 px-3 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-300/10"
+                  >
+                    Khôi phục
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       <section
         aria-labelledby="collection-progress-title"
         className="mx-auto mb-6 w-full max-w-2xl border-b border-white/10 pb-5"
@@ -1162,6 +1281,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             { id: 'intimate', label: '🔥 Thân mật' },
             { id: 'passionate', label: '💋 Nồng nhiệt' },
             { id: 'favorites', label: `♥ Đã thích (${visibleFavorites.length})` },
+            ...(isDeveloper && frameCount > 0 ? [{ id: 'frames', label: `▢ Khung chưa điền (${frameCount})` }] : []),
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1241,8 +1361,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             return (
               <div
                 key={card.id}
+                className="relative"
                 style={{ contentVisibility: 'auto', containIntrinsicSize: '0 300px' }}
               >
+                {isDeveloper && isCardFrame(card) && (
+                  <p className="mb-1.5 text-center text-[9px] font-bold uppercase tracking-wide text-sky-300">
+                    ▢ Khung · chưa vào game
+                  </p>
+                )}
                 <GameCard
                   card={card}
                   size="sm"
@@ -1292,29 +1418,33 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 isFavorited={favorites.includes(selectedCard.id)}
                 onToggleFavorite={onToggleFavorite}
               />
-              {isDeveloper && pendingDeleteCardId !== selectedCard.id && (
-                <div className={`mt-3 grid gap-2 ${onDeleteCard && selectedCard.position?.family !== 'have_sex' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {canAuthor && pendingDeleteCardId !== selectedCard.id && (canEditCard(selectedCard) || canDeleteCard(selectedCard)) && (
+                <div className={`mt-3 grid gap-2 ${canEditCard(selectedCard) && canDeleteCard(selectedCard) ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                  {canEditCard(selectedCard) && (
                   <button
                     onClick={() => openEditEditor(selectedCard)}
                     className="flex min-h-11 items-center justify-center gap-2 rounded-full border border-rose-400/40 bg-rose-600/20 px-3 text-sm font-semibold text-rose-200 transition-colors hover:bg-rose-600/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 motion-reduce:transition-none"
                   >
                     <Pencil className="w-4 h-4" /> Chỉnh sửa
                   </button>
-                  {onDeleteCard && selectedCard.position?.family !== 'have_sex' && (
+                  )}
+                  {canDeleteCard(selectedCard) && (
                     <button
                       onClick={() => setPendingDeleteCardId(selectedCard.id)}
                       className="flex min-h-11 items-center justify-center gap-2 rounded-full border border-neutral-600/70 bg-neutral-950/70 px-3 text-sm font-semibold text-neutral-300 transition-colors hover:border-red-400/50 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 motion-reduce:transition-none"
                     >
-                      <Trash2 className="h-4 w-4" /> Xóa
+                      <Trash2 className="h-4 w-4" /> {!isDeveloper && !ownCardIdSet.has(selectedCard.id) ? 'Xóa khỏi bộ của tôi' : 'Xóa'}
                     </button>
                   )}
                 </div>
               )}
 
-              {isDeveloper && onDeleteCard && selectedCard.position?.family !== 'have_sex' && pendingDeleteCardId === selectedCard.id && (
+              {canDeleteCard(selectedCard) && pendingDeleteCardId === selectedCard.id && (
                 <div className="mt-3 rounded-2xl border border-red-400/30 bg-neutral-950/95 p-3" aria-live="polite">
                   <p className="text-center text-xs leading-relaxed text-neutral-300">
-                    Xóa lá bài này khỏi bộ sưu tập?
+                    {!isDeveloper && !ownCardIdSet.has(selectedCard.id)
+                      ? 'Xóa lá này khỏi bộ thẻ của tài khoản? Có thể khôi phục lại bất cứ lúc nào.'
+                      : 'Xóa lá bài này khỏi bộ sưu tập?'}
                   </p>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
@@ -1342,7 +1472,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
 
       {/* ADD CUSTOM CARD MODAL WITH IMAGE EDITOR */}
       <AnimatePresence>
-        {isAdding && isDeveloper && (
+        {isAdding && canAuthor && (
           <div
             className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/80 backdrop-blur-md"
             role="dialog"
@@ -1393,7 +1523,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           setCustomClothingEffect(customPositionRecipient);
                           setClothingEffectTouched(true);
                         }
-                      } else if (customClothingEffect === 'male' || customClothingEffect === 'female' || customClothingEffect === 'both') {
+                      } else if (customClothingEffect === 'male' || customClothingEffect === 'female') {
                         setCustomClothingEffect('none');
                         setClothingEffectTouched(true);
                       }
@@ -1672,6 +1802,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       <>
                         <option value="self">Người đang lượt bỏ 1 món</option>
                         <option value="opponent">Đối phương bỏ 1 món</option>
+                        <option value="both">Mỗi người cùng bỏ 1 món</option>
                       </>
                     ) : (
                       <>
@@ -2243,6 +2374,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             onChange={onProgressionConfigChange}
             luxuryConfig={luxuryProgressionConfig}
             onLuxuryChange={onLuxuryProgressionConfigChange}
+            cards={cards}
             onClose={() => setShowProgressionConfig(false)}
           />
         )}

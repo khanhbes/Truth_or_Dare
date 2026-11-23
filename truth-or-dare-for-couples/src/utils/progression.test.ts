@@ -19,6 +19,8 @@ import {
   isStandardJourneyCardEligible,
   selectJourneyCard,
   selectLuxuryPositionCard,
+  validateLuxuryProgressionConfig,
+  validateProgressionConfig,
 } from './progression';
 
 const outfits = [
@@ -293,6 +295,18 @@ test('wardrobe tiers cap stars, favor the target star and use the least-clothed 
 
   const [dressedMale] = dressedOutfits();
   const mixed = [dressedMale, underwearOnlyOutfits()[1]] as const;
+  const earlyMixedProbabilities = getJourneyDrawProbabilities({
+    cards,
+    actorIndex: 0,
+    outfits: mixed,
+    usedCardIds: [],
+    levels: ['gentle'],
+    intimacyPercent: 25,
+    config: DEFAULT_PROGRESSION_CONFIG,
+  });
+  assert.equal(earlyMixedProbabilities.stars[4], 0);
+  assert.equal(earlyMixedProbabilities.stars[5], 0);
+
   const mixedProbabilities = getJourneyDrawProbabilities({
     cards,
     actorIndex: 0,
@@ -365,10 +379,10 @@ test('selection chooses type then stars and avoids repeats until the pool is exh
 test('completion gain clamps at 100 and penalty removals are not part of this reducer', () => {
   const card = makeCard('four-star', 'dare', 4);
   assert.deepEqual(calculateCompletedCardIntimacy(80, card, DEFAULT_PROGRESSION_CONFIG, true), {
-    nextPercent: 94,
+    nextPercent: 89,
     baseApplied: 6,
-    removalApplied: 8,
-    totalApplied: 14,
+    removalApplied: 3,
+    totalApplied: 9,
   });
   assert.deepEqual(calculateCompletedCardIntimacy(96, card, DEFAULT_PROGRESSION_CONFIG, true), {
     nextPercent: 100,
@@ -539,10 +553,10 @@ test('Luxury selection never falls back to the other recipient', () => {
   assert.equal(result.errorCode, 'no_cards');
 });
 
-test('Luxury completion uses 6–14 defaults, per-card override and clamps at 100', () => {
+test('Luxury completion uses the 9–12 defaults, per-card override and clamps at 100', () => {
   assert.deepEqual(
     calculateCompletedPositionLuxury(0, makePositionCard('one', 1), DEFAULT_LUXURY_PROGRESSION_CONFIG),
-    { nextPercent: 6, baseApplied: 6, removalApplied: 0, totalApplied: 6 },
+    { nextPercent: 9, baseApplied: 9, removalApplied: 0, totalApplied: 9 },
   );
   assert.deepEqual(
     calculateCompletedPositionLuxury(90, makePositionCard('nine', 9), DEFAULT_LUXURY_PROGRESSION_CONFIG),
@@ -592,8 +606,8 @@ test('Luxury config hydration preserves absolute zero rows and clamps gains', ()
     Array.from({ length: 5 }, (_, index) => [index + 6, 0]),
   ));
   assert.equal(hydrated.bands[1].starWeights[10], 9);
-  assert.equal(hydrated.starGains[6], 6);
-  assert.equal(hydrated.starGains[7], 8);
+  assert.equal(hydrated.starGains[6], 9);
+  assert.equal(hydrated.starGains[7], 10);
   assert.equal(hydrated.starGains[10], 100);
 });
 
@@ -658,4 +672,32 @@ test('hydration clamps finite oversized weights before normalization', () => {
   const hydrated = hydrateLuxuryProgressionConfig({ bands: [{ starWeights: { 6: 1e308, 10: 1e308 } }] });
   assert.equal(hydrated.bands[0].starWeights[6], 100);
   assert.equal(hydrated.bands[0].starWeights[10], 100);
+});
+
+test('progression validators flag non-monotonic curves and empty star tiers while accepting clean configs', () => {
+  assert.deepEqual(validateProgressionConfig(DEFAULT_PROGRESSION_CONFIG), []);
+  assert.deepEqual(validateLuxuryProgressionConfig(DEFAULT_LUXURY_PROGRESSION_CONFIG), []);
+
+  const regressedLuxury = hydrateLuxuryProgressionConfig({
+    bands: [
+      { minPercent: 0, maxPercent: 19, starWeights: { 6: 50, 7: 30, 8: 20, 9: 0, 10: 0 } },
+      { minPercent: 20, maxPercent: 39, starWeights: { 6: 0, 7: 20, 8: 40, 9: 25, 10: 15 } },
+      { minPercent: 40, maxPercent: 59, starWeights: { 6: 20, 7: 10, 8: 0, 9: 0, 10: 0 } },
+      { minPercent: 60, maxPercent: 79, starWeights: { 6: 25, 7: 35, 8: 20, 9: 10, 10: 0 } },
+      { minPercent: 80, maxPercent: 99, starWeights: { 6: 10, 7: 20, 8: 25, 9: 35, 10: 5 } },
+    ],
+    starGains: { 6: 11, 7: 12, 8: 13, 9: 14, 10: 0 },
+    finalCardChance: 5,
+  });
+  const cards = [
+    makePositionCard('p6', 6),
+    makePositionCard('p7', 7),
+    makePositionCard('p8', 8),
+    makePositionCard('p9', 9),
+    makePositionCard('final', 10),
+  ];
+  const warnings = validateLuxuryProgressionConfig(regressedLuxury, cards);
+  assert.ok(warnings.some((w) => w.includes('40–59%')));
+  assert.ok(warnings.some((w) => w.includes('10★')));
+  assert.ok(warnings.some((w) => w.includes('Điểm cộng Luxury trung bình')));
 });
