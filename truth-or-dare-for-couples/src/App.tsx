@@ -1108,11 +1108,12 @@ export default function App() {
   return (
     <div className="relative min-h-screen overflow-x-hidden">
       {/* Romantic Ambient Particle Background */}
-      <ParticleBackground />
+      <ParticleBackground heat={screen === 'game' ? (journeyPhase === 'standard' ? intimacyPercent / 100 : 1) : 0} />
 
       {/* Main Screen Views */}
       <main className="relative z-10">
         {screen === 'intro' && (
+          <div key="intro" className="screen-enter">
           <IntroScreen
             mode={appMode}
             coupleName={coupleSession?.coupleName}
@@ -1124,9 +1125,11 @@ export default function App() {
             onOpenCollection={() => openCollection('intro')}
             onOpenRules={() => setShowRules(true)}
           />
+          </div>
         )}
 
         {screen === 'setup' && (
+          <div key="setup" className="screen-enter">
           <SetupScreen
             initialPlayer1={player1}
             initialPlayer2={player2}
@@ -1139,10 +1142,11 @@ export default function App() {
             onOpenRules={() => setShowRules(true)}
             onStartGame={handleStartGame}
           />
+          </div>
         )}
 
         {keepGameMounted && (
-          <div hidden={screen !== 'game'} aria-hidden={screen !== 'game' || undefined}>
+          <div className="screen-fade" hidden={screen !== 'game'} aria-hidden={screen !== 'game' || undefined}>
             <GameTable
             player1={player1}
             player2={player2}
@@ -1202,6 +1206,7 @@ export default function App() {
         )}
 
         {screen === 'collection' && (
+          <div className="screen-fade">
           <Suspense fallback={<div className="grid min-h-screen place-items-center text-sm text-rose-200">Đang mở Bộ sưu tập…</div>}>
             <CardCollection
             cards={appMode === 'developer' ? allCards : playerCards}
@@ -1236,6 +1241,7 @@ export default function App() {
             onBack={() => setScreen(collectionReturnScreen)}
           />
           </Suspense>
+          </div>
         )}
       </main>
 

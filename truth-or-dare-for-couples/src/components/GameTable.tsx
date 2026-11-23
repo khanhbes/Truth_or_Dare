@@ -169,6 +169,8 @@ interface PlayerOutfitStatusProps {
   hasPendingDifficultyBoost: boolean;
   active: boolean;
   mobile?: boolean;
+  /** 0–1 warmth of the moment, shown as blush, smile and hearts. */
+  mood?: number;
 }
 
 const OUTFIT_STAGE_COPY = {
@@ -221,6 +223,7 @@ const PlayerOutfitStatus: React.FC<PlayerOutfitStatusProps> = React.memo(({
   hasPendingDifficultyBoost,
   active,
   mobile = false,
+  mood = 0,
 }) => {
   const stage = getOutfitStage(outfitState);
   const count = getPresentGarmentSlots(outfitState).length;
@@ -238,6 +241,7 @@ const PlayerOutfitStatus: React.FC<PlayerOutfitStatusProps> = React.memo(({
         outfit={outfitState.initial}
         state={outfitState}
         active={active}
+        mood={mood}
         compact
         className={mobile ? 'game-outfit-dock' : 'game-outfit-side'}
         ariaLabel={`Hình trang phục hiện tại của ${player.name}`}
@@ -309,6 +313,38 @@ export const GameTable: React.FC<GameTableProps> = ({
   const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
   const [isMuted, setIsMuted] = useState(soundEngine.getMuted());
   const shouldReduceMotion = useReducedMotion();
+  const figureMood = journeyPhase === 'standard' ? Math.min(1, intimacyPercent / 100) : 1;
+  const displayedJourneyPercent = journeyPhase === 'standard' ? intimacyPercent : luxuryIntimacyPercent;
+  const previousJourneyPercentRef = useRef(displayedJourneyPercent);
+  const [journeyGain, setJourneyGain] = useState<{ id: number; amount: number } | null>(null);
+  useEffect(() => {
+    const previous = previousJourneyPercentRef.current;
+    previousJourneyPercentRef.current = displayedJourneyPercent;
+    if (displayedJourneyPercent <= previous) return;
+    const gain = { id: Date.now(), amount: displayedJourneyPercent - previous };
+    setJourneyGain(gain);
+    const timer = window.setTimeout(() => {
+      setJourneyGain((current) => (current?.id === gain.id ? null : current));
+    }, 1600);
+    return () => window.clearTimeout(timer);
+  }, [displayedJourneyPercent]);
+  const previousPhaseRef = useRef(journeyPhase);
+  useEffect(() => {
+    const previous = previousPhaseRef.current;
+    previousPhaseRef.current = journeyPhase;
+    if (shouldReduceMotion || previous === journeyPhase || journeyPhase !== 'position_consent') return;
+    // Tim Hồng full and both undressed: a soft burst of hearts.
+    const heart = typeof confetti.shapeFromText === 'function' ? confetti.shapeFromText({ text: '♥', scalar: 2 }) : undefined;
+    confetti({
+      particleCount: 70,
+      spread: 100,
+      startVelocity: 32,
+      origin: { y: 0.55 },
+      scalar: 1.6,
+      colors: ['#fb7185', '#f9a8d4', '#fda4af', '#e2c275'],
+      ...(heart ? { shapes: [heart] } : {}),
+    });
+  }, [journeyPhase, shouldReduceMotion]);
   const [showPenaltyPrompt, setShowPenaltyPrompt] = useState(false);
   const [usedCardIds, setUsedCardIds] = useState<string[]>([]);
   const [clothingJourney, setClothingJourney] = useState(createClothingJourney);
@@ -1275,6 +1311,16 @@ export const GameTable: React.FC<GameTableProps> = ({
     setFinalChoice(null);
     completionCommittedRef.current = false;
     soundEngine.playCardFlip();
+    if (!shouldReduceMotion) {
+      confetti({
+        particleCount: 90,
+        spread: 120,
+        startVelocity: 38,
+        origin: { y: 0.5 },
+        shapes: ['star'],
+        colors: ['#f7e7b0', '#e2c275', '#d7b1ff', '#fff4d6'],
+      });
+    }
     setActiveCard(card);
     setIsRevealed(true);
     setCardFlipped(true);
@@ -1543,12 +1589,19 @@ export const GameTable: React.FC<GameTableProps> = ({
       <section className="mt-3 px-1" aria-label="Tiến trình thân mật hai giai đoạn">
         <div className="mb-1.5 flex items-end justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="relative grid h-8 w-8 place-items-center" aria-hidden="true">
-              <Heart className="absolute h-7 w-7 fill-rose-500/80 text-rose-300" />
+            <motion.span
+              key={journeyGain?.id ?? 'heart'}
+              className="relative grid h-8 w-8 place-items-center"
+              aria-hidden="true"
+              initial={false}
+              animate={journeyGain && !shouldReduceMotion ? { scale: [1, 1.32, 0.94, 1.08, 1] } : { scale: 1 }}
+              transition={{ duration: 0.75, ease: 'easeOut' }}
+            >
+              <Heart className="absolute h-7 w-7 fill-rose-500/80 text-rose-300 drop-shadow-[0_0_8px_rgba(251,113,133,.45)]" />
               {journeyPhase !== 'standard' && (
                 <Heart className="absolute h-5 w-5 fill-[#d7b1ff]/35 text-[#f0d7ff] drop-shadow-[0_0_7px_rgba(232,164,140,.55)]" />
               )}
-            </span>
+            </motion.span>
             <div>
               <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/75">Hành trình thân mật</span>
               <p className="mt-0.5 text-[10px] text-neutral-500">
@@ -1556,9 +1609,26 @@ export const GameTable: React.FC<GameTableProps> = ({
               </p>
             </div>
           </div>
-          <strong className={`font-serif-romantic text-xl ${journeyPhase === 'standard' ? 'text-rose-200' : 'text-[#f1d6ff]'}`}>
-            {journeyPhase === 'standard' ? intimacyPercent : luxuryIntimacyPercent}%
-          </strong>
+          <span className="relative">
+            <AnimatePresence>
+              {journeyGain && (
+                <motion.span
+                  key={journeyGain.id}
+                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.8 }}
+                  animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: -18, scale: 1 }}
+                  exit={{ opacity: 0, y: shouldReduceMotion ? 0 : -30 }}
+                  transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                  className={`pointer-events-none absolute right-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-black ${journeyPhase === 'standard' ? 'bg-rose-500/25 text-rose-100' : 'bg-[#d7b1ff]/20 text-[#f4e8ff]'}`}
+                  aria-hidden="true"
+                >
+                  +{journeyGain.amount}%
+                </motion.span>
+              )}
+            </AnimatePresence>
+            <strong className={`font-serif-romantic text-xl tabular-nums ${journeyPhase === 'standard' ? 'text-rose-200' : 'text-[#f1d6ff]'}`}>
+              {displayedJourneyPercent}%
+            </strong>
+          </span>
         </div>
         <div className="relative h-3 overflow-hidden rounded-full border border-white/10 bg-black/35">
           <motion.div
@@ -1570,7 +1640,8 @@ export const GameTable: React.FC<GameTableProps> = ({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={intimacyPercent}
-            className="absolute inset-y-0 left-0 rounded-full bg-[#f9a8d4] shadow-[0_0_10px_rgba(249,168,212,.25)]"
+            className="progress-shimmer absolute inset-y-0 left-0 rounded-full bg-[#f9a8d4]"
+            style={{ boxShadow: `0 0 ${6 + intimacyPercent * 0.14}px rgba(249,168,212,${0.2 + intimacyPercent * 0.004})` }}
           />
           {journeyPhase !== 'standard' && (
             <motion.div
@@ -1675,14 +1746,14 @@ export const GameTable: React.FC<GameTableProps> = ({
       </AnimatePresence>
 
       <div className="game-outfit-mobile" aria-label="Trang phục hiện tại của hai người chơi">
-        <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} mobile />
-        <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} mobile />
+        <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} mood={figureMood} mobile />
+        <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} mood={figureMood} mobile />
       </div>
 
       {/* MAIN GAME TABLE AREA */}
       <div className="game-table-stage my-auto py-6">
         <div className="game-outfit-desktop">
-          <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} />
+          <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} mood={figureMood} />
         </div>
         <div className="game-table-stage__center">
         {journeyPhase === 'position_consent' && (
@@ -1736,7 +1807,7 @@ export const GameTable: React.FC<GameTableProps> = ({
                 type="button"
                 onClick={handleEnterPositionJourney}
                 disabled={!outfitsPrepared}
-                className="min-h-12 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-4 text-xs font-bold text-[#08101f] shadow-[0_0_24px_rgba(226,194,117,.25)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transform-none"
+                className="btn-shine min-h-12 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-4 text-xs font-bold text-[#08101f] shadow-[0_0_24px_rgba(226,194,117,.25)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transform-none"
               >
                 Cả hai đồng ý, tiếp tục
               </button>
@@ -1893,7 +1964,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             <button
               type="button"
               onClick={handlePositionDraw}
-              className="mt-5 flex min-h-12 items-center gap-2 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-8 text-sm font-bold text-[#08101f] shadow-[0_0_26px_rgba(226,194,117,.24)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fff4d6] motion-reduce:transform-none"
+              className="btn-shine mt-5 flex min-h-12 items-center gap-2 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-8 text-sm font-bold text-[#08101f] shadow-[0_0_26px_rgba(226,194,117,.24)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fff4d6] motion-reduce:transform-none"
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" /> Rút thẻ Tư thế
             </button>
@@ -1971,7 +2042,7 @@ export const GameTable: React.FC<GameTableProps> = ({
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleStartDraw}
-              className="px-8 py-3.5 rounded-full font-bold text-base text-neutral-950 bg-gold-gradient shadow-[0_0_20px_rgba(212,175,55,0.4)] hover:shadow-[0_0_30px_rgba(255,107,157,0.5)] transition-all cursor-pointer flex items-center gap-2"
+              className="btn-shine px-8 py-3.5 rounded-full font-bold text-base text-neutral-950 bg-gold-gradient shadow-[0_0_20px_rgba(212,175,55,0.4)] hover:shadow-[0_0_30px_rgba(255,107,157,0.5)] transition-all cursor-pointer flex items-center gap-2"
             >
               <Sparkles className="w-5 h-5 fill-neutral-950" />
               <span>Rút Bài Ngay</span>
@@ -2084,7 +2155,7 @@ export const GameTable: React.FC<GameTableProps> = ({
                   scale: 1,
                   opacity: 1,
                 }}
-                transition={{ duration: shouldReduceMotion ? 0.08 : 0.7, ease: 'easeOut' }}
+                transition={{ duration: shouldReduceMotion ? 0.08 : 0.85, ease: [0.22, 1, 0.36, 1] }}
                 className="transform-style-3d relative w-full"
                 style={{ minHeight: '420px' }}
               >
@@ -2105,6 +2176,9 @@ export const GameTable: React.FC<GameTableProps> = ({
                 } ${!isPositionCard && activeCard.level !== 'gentle' ? 'card-wave-pattern' : ''}`}
                   style={{ borderRadius: '16px' }}
                 >
+                  {cardFlipped && !shouldReduceMotion && (
+                    <span key={`sheen-${activeCard.id}-${isRevealed}`} className="card-sheen" aria-hidden="true" />
+                  )}
                   {/* Corner decorations for intimate/passionate */}
                   {!isPositionCard && activeCard.level !== 'gentle' && (
                     <>
@@ -2396,7 +2470,7 @@ export const GameTable: React.FC<GameTableProps> = ({
         )}
         </div>
         <div className="game-outfit-desktop">
-          <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} />
+          <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} mood={figureMood} />
         </div>
       </div>
 

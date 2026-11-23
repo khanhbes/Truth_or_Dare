@@ -162,7 +162,7 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
             soundEngine.playCardFlip();
             onStart();
           }}
-          className="relative group px-10 py-4 rounded-full font-medium text-base sm:text-lg text-neutral-900 bg-gold-gradient shadow-[0_0_25px_rgba(212,175,55,0.4)] hover:shadow-[0_0_35px_rgba(255,107,157,0.6)] transition-all duration-300 flex items-center gap-3 cursor-pointer"
+          className="btn-shine relative group px-10 py-4 rounded-full font-medium text-base sm:text-lg text-neutral-900 bg-gold-gradient shadow-[0_0_25px_rgba(212,175,55,0.4)] hover:shadow-[0_0_35px_rgba(255,107,157,0.6)] transition-all duration-300 flex items-center gap-3 cursor-pointer"
         >
           {mode === 'player' ? <Play className="w-5 h-5 fill-neutral-900" /> : <Code2 className="h-5 w-5" />}
           <span className="font-semibold tracking-wide">{mode === 'player' ? 'Bắt Đầu Chơi' : 'Mở Trình Quản Lý'}</span>
