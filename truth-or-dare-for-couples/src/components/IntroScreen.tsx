@@ -16,6 +16,7 @@ import {
   User,
 } from 'lucide-react';
 import { soundEngine } from '../utils/audio';
+import { AdminModeButton } from './AdminModeButton';
 
 interface IntroScreenProps {
   mode: 'player' | 'developer';
@@ -183,10 +184,13 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
       </motion.div>
 
       {/* Footer tagline */}
-      <div className="text-xs text-neutral-500 font-light flex items-center gap-1">
-        <span>Thiết kế dành riêng cho 2 người</span>
-        <span className="text-rose-500">♥</span>
-        <span>Giữ trọn cảm xúc ngọt ngào</span>
+      <div className="flex flex-col items-center gap-3">
+        <div className="text-xs text-neutral-500 font-light flex items-center gap-1">
+          <span>Thiết kế dành riêng cho 2 người</span>
+          <span className="text-rose-500">♥</span>
+          <span>Giữ trọn cảm xúc ngọt ngào</span>
+        </div>
+        {mode === 'player' && <AdminModeButton />}
       </div>
     </div>
   );

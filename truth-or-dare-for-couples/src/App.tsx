@@ -91,6 +91,11 @@ const CardCollection = lazy(async () => {
   return { default: module.CardCollection };
 });
 
+const AdminDashboard = lazy(async () => {
+  const module = await import('./components/admin/AdminDashboard');
+  return { default: module.AdminDashboard };
+});
+
 const STORAGE_KEYS = {
   CUSTOM_CARDS: 'tod_couples_custom_cards',
   EDITED_CARDS: 'tod_couples_edited_cards',
@@ -1061,6 +1066,34 @@ export default function App() {
     return (
       <div className="grid min-h-screen place-items-center bg-[#12090f] text-sm text-rose-200" role="status">
         Đang kiểm tra phiên người chơi…
+      </div>
+    );
+  }
+
+  if (appMode === 'developer') {
+    return (
+      <div className="relative min-h-screen overflow-x-hidden">
+        <ParticleBackground />
+        <Suspense fallback={<div className="relative z-10 grid min-h-screen place-items-center text-sm text-amber-100">Đang mở trang quản trị…</div>}>
+          <AdminDashboard
+            cards={allCards}
+            favorites={favorites}
+            onToggleFavorite={handleToggleFavorite}
+            unlockedCardIds={unlockedCardIds}
+            onAddCustomCard={handleAddCustomCard}
+            onUpdateCard={handleUpdateCard}
+            onDeleteCard={handleDeleteCard}
+            progressionConfig={progressionConfig}
+            onProgressionConfigChange={handleProgressionConfigChange}
+            luxuryProgressionConfig={luxuryProgressionConfig}
+            onLuxuryProgressionConfigChange={handleLuxuryProgressionConfigChange}
+            catalogSync={catalogSync}
+            playerStats={adminPlayerStats}
+            onExportCatalog={handleExportCatalog}
+            onImportCatalog={handleImportCatalog}
+            onCreateCloudBackup={handleCreateCloudBackup}
+          />
+        </Suspense>
       </div>
     );
   }

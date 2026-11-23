@@ -100,6 +100,15 @@ export interface CardCollectionProps {
     statusMessage?: string | null;
   };
   onBack: () => void;
+  /**
+   * Rendered inside the admin dashboard: the dashboard owns the page header,
+   * cloud status and stats, so the collection shows only a slim toolbar.
+   */
+  embedded?: boolean;
+  /** Tab to open on mount (the dashboard uses "frames" for its frames page). */
+  initialTab?: 'all' | 'frames';
+  /** Open the "new card" editor on mount. */
+  autoOpenEditor?: boolean;
 }
 
 type ClothingEffectSelection = 'none' | 'self' | 'opponent' | 'male' | 'female' | 'both' | 'swap';
@@ -363,9 +372,12 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   onOpenAccountModal,
   accountDeck,
   onBack,
+  embedded = false,
+  initialTab = 'all',
+  autoOpenEditor = false,
 }) => {
   const prefersReducedMotion = useReducedMotion();
-  const [activeTab, setActiveTab] = useState<CollectionTab>('all');
+  const [activeTab, setActiveTab] = useState<CollectionTab>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<CardItem | null>(null);
   const [pendingDeleteCardId, setPendingDeleteCardId] = useState<string | null>(null);
@@ -777,6 +789,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
     setIsAdding(true);
   };
 
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpenEditor || autoOpenedRef.current || !onAddCustomCard) return;
+    autoOpenedRef.current = true;
+    resetEditor();
+    setIsAdding(true);
+  }, [autoOpenEditor, onAddCustomCard, resetEditor]);
+
   const openEditEditor = (card: CardItem) => {
     const cardDeck = getCardDeck(card);
     const storedEffect = card.clothingEffect;
@@ -951,7 +971,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   };
 
   return (
-    <div className="relative z-10 max-w-6xl mx-auto px-4 py-6 text-white min-h-screen flex flex-col">
+    <div className={embedded ? 'relative z-10 flex flex-col text-white' : 'relative z-10 max-w-6xl mx-auto px-4 py-6 text-white min-h-screen flex flex-col'}>
       <nav
         aria-label="Điều hướng nhanh Bộ sưu tập"
         className="fixed bottom-4 right-3 z-30 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#130b13]/90 shadow-2xl backdrop-blur-md sm:right-5"
@@ -975,7 +995,30 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           <ChevronsDown className="h-5 w-5" aria-hidden="true" />
         </button>
       </nav>
+      {embedded && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-neutral-400">
+            <strong className="text-sm text-neutral-100">{cards.length - frameCount}</strong> lá đang dùng
+            {frameCount > 0 && <> · <strong className="text-sky-200">{frameCount}</strong> khung trống</>}
+            {' '}· bấm vào lá để xem, sửa hoặc xóa
+          </p>
+          {onAddCustomCard && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTick();
+                openCreateEditor();
+              }}
+              className="flex min-h-10 items-center gap-1.5 rounded-full bg-rose-600/85 px-4 text-xs font-semibold text-white shadow-md transition-colors hover:bg-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" /> Thêm thẻ mới
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Header Bar */}
+      {!embedded && (
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 sm:gap-4 mb-6 pb-4 border-b border-rose-500/20">
         <button
           onClick={onBack}
@@ -1051,8 +1094,9 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           )}
         </div>
       </div>
+      )}
 
-      {isDeveloper && catalogSync && (
+      {isDeveloper && catalogSync && !embedded && (
         <section
           aria-label="Trạng thái dữ liệu cloud"
           className="mb-6 border-b border-white/10 pb-5"
@@ -1221,6 +1265,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         </section>
       )}
 
+      {!embedded && (
       <section
         aria-labelledby="collection-progress-title"
         className="mx-auto mb-6 w-full max-w-2xl border-b border-white/10 pb-5"
@@ -1255,6 +1300,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           />
         </div>
       </section>
+      )}
 
       {/* Search Bar & Filter Tabs */}
       <div className="space-y-4 mb-6">

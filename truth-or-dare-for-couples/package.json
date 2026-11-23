@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "dev:cloud": "wrangler pages dev dist --port 8788",
+    "dev:local": "npm run build && wrangler pages dev dist --port 8788 --binding DEV_ADMIN_EMAIL=admin@local.test",
     "cf:migrate:local": "wrangler d1 migrations apply true-or-dare-catalog-local --local",
     "cf:deploy:backup": "wrangler deploy --config backup-worker/wrangler.jsonc",
     "catalog:materialize": "tsx scripts/materialize_catalog.ts",

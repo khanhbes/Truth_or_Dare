@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Flag,
   Info,
+  Ellipsis,
 } from 'lucide-react';
 import {
   CardItem,
@@ -367,6 +368,23 @@ export const GameTable: React.FC<GameTableProps> = ({
   const [showDualRemovalDialog, setShowDualRemovalDialog] = useState(false);
   const [finalChoice, setFinalChoice] = useState<FinalChoiceState | null>(null);
   const [showOddsDetails, setShowOddsDetails] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!moreMenuRef.current?.contains(event.target as Node)) setShowMoreMenu(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowMoreMenu(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showMoreMenu]);
 
   // Card draw state machine
   const [drawState, setDrawState] = useState<
@@ -1469,7 +1487,7 @@ export const GameTable: React.FC<GameTableProps> = ({
   return (
     <div className="relative z-10 max-w-7xl mx-auto px-4 py-4 min-h-[92vh] flex flex-col justify-between">
       {/* HEADER: Top Bar Stats & Controls */}
-      <div className="w-full flex flex-wrap items-center justify-between gap-3 glass-dark rounded-2xl px-4 py-3 border border-rose-500/20 shadow-lg">
+      <div className="relative z-30 w-full flex flex-wrap items-center justify-between gap-3 glass-dark rounded-2xl px-4 py-3 border border-rose-500/20 shadow-lg">
         {/* Current Turn Badge */}
         <div className="flex items-center gap-3">
           <div
@@ -1484,17 +1502,17 @@ export const GameTable: React.FC<GameTableProps> = ({
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wider text-neutral-400">
-              Đang tới lượt
+              Đang tới lượt<span className="normal-case tracking-normal text-amber-200/80 sm:hidden"> · Lượt {currentRound}</span>
             </div>
             <div className="font-serif-romantic text-base font-bold text-white flex items-center gap-1.5">
-              <span>{currentPlayer.name}</span>
+              <span className="max-w-[7.5rem] truncate sm:max-w-none">{currentPlayer.name}</span>
               <span className={`w-2 h-2 rounded-full bg-emerald-400 inline-block ${shouldReduceMotion ? '' : 'animate-ping'}`} />
             </div>
           </div>
         </div>
 
-        {/* Round Progress Bar */}
-        <div className="flex flex-col items-center">
+        {/* Round Progress Bar (phones show the round inside the turn badge) */}
+        <div className="hidden flex-col items-center sm:flex">
           <div className="text-xs text-amber-200/90 font-medium mb-1 flex items-center gap-1">
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
             <span>
@@ -1515,7 +1533,7 @@ export const GameTable: React.FC<GameTableProps> = ({
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5 sm:ml-0 sm:gap-2">
           <button
             onClick={handleToggleMute}
             aria-label={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
@@ -1540,7 +1558,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             onClick={onOpenCollection}
             disabled={navigationLocked}
             aria-label="Mở bộ sưu tập thẻ"
-            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-amber-300 hover:text-amber-100 transition-all text-xs"
+            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-amber-300 hover:text-amber-100 transition-all text-xs"
           >
             <BookOpen className="w-4 h-4 text-amber-400" />
             <span className="hidden sm:inline">Bộ sưu tập</span>
@@ -1550,7 +1568,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             onClick={onOpenSummary}
             disabled={navigationLocked}
             aria-label="Mở tổng kết và thống kê"
-            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-rose-950/60 px-3 border border-rose-500/30 text-rose-300 hover:text-rose-100 transition-all text-xs"
+            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-rose-950/60 px-3 border border-rose-500/30 text-rose-300 hover:text-rose-100 transition-all text-xs"
           >
             <Trophy className="w-4 h-4 text-rose-400" />
             <span className="hidden sm:inline">Thống kê</span>
@@ -1564,7 +1582,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             disabled={navigationLocked}
             aria-label="Kết thúc ván"
             title="Kết thúc ván"
-            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-neutral-300 hover:text-white transition-all text-xs disabled:opacity-40"
+            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-neutral-300 hover:text-white transition-all text-xs disabled:opacity-40"
           >
             <Flag className="w-4 h-4" aria-hidden="true" />
             <span className="hidden sm:inline">Kết thúc</span>
@@ -1577,12 +1595,68 @@ export const GameTable: React.FC<GameTableProps> = ({
               disabled={navigationLocked}
               aria-label="Tài khoản và đồng bộ"
               title={coupleName ? `Tài khoản: ${coupleName}` : 'Đăng nhập tài khoản'}
-              className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-2.5 border border-rose-500/30 text-rose-200 hover:border-rose-400 hover:text-white transition-all text-xs cursor-pointer"
+              className="hidden sm:flex h-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-2.5 border border-rose-500/30 text-rose-200 hover:border-rose-400 hover:text-white transition-all text-xs cursor-pointer"
             >
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
               <span className="hidden lg:inline max-w-[110px] truncate">{coupleName || 'Tài khoản'}</span>
             </button>
           )}
+
+          <div ref={moreMenuRef} className="relative sm:hidden">
+            <button
+              type="button"
+              onClick={() => setShowMoreMenu((open) => !open)}
+              aria-expanded={showMoreMenu}
+              aria-haspopup="menu"
+              className="flex h-11 items-center gap-1.5 rounded-xl border border-neutral-700/60 bg-neutral-900/80 px-3 text-xs font-semibold text-neutral-200"
+            >
+              <Ellipsis className="h-4 w-4" aria-hidden="true" /> Thêm
+            </button>
+            <AnimatePresence>
+              {showMoreMenu && (
+                <motion.div
+                  role="menu"
+                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.16 }}
+                  className="absolute right-0 top-[calc(100%+8px)] z-[60] w-56 overflow-hidden rounded-2xl border border-white/12 bg-[#171014]/98 p-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl"
+                >
+                  {[
+                    { label: 'Bộ sưu tập thẻ', icon: BookOpen, tone: 'text-amber-300', onSelect: onOpenCollection },
+                    { label: 'Thống kê ván', icon: Trophy, tone: 'text-rose-300', onSelect: onOpenSummary },
+                    ...(onOpenAccountModal ? [{ label: coupleName ? `Tài khoản · ${coupleName}` : 'Tài khoản', icon: ShieldCheck, tone: 'text-emerald-400', onSelect: onOpenAccountModal }] : []),
+                    {
+                      label: 'Kết thúc ván',
+                      icon: Flag,
+                      tone: 'text-neutral-300',
+                      onSelect: () => {
+                        if (window.confirm('Kết thúc ván ngay bây giờ? Hai bạn sẽ xem tổng kết của ván này.')) onFinishGame('manual');
+                      },
+                    },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.label}
+                        type="button"
+                        role="menuitem"
+                        disabled={navigationLocked}
+                        onClick={() => {
+                          setShowMoreMenu(false);
+                          item.onSelect();
+                        }}
+                        className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm text-neutral-100 hover:bg-white/[0.06] disabled:opacity-40"
+                      >
+                        <Icon className={`h-4 w-4 shrink-0 ${item.tone}`} aria-hidden="true" />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 
@@ -1605,7 +1679,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             <div>
               <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/75">Hành trình thân mật</span>
               <p className="mt-0.5 text-[10px] text-neutral-500">
-                {journeyPhase === 'standard' ? 'Hoàn thành để mở Tim Luxury' : 'Tim hồng đã đầy · đang tích lũy Luxury'}
+                {journeyPhase === 'standard' ? 'Lấp đầy tim hồng để mở Bộ Tư thế' : 'Bộ Tư thế · lấp đầy để tới lá cuối'}
               </p>
             </div>
           </div>
@@ -1684,8 +1758,6 @@ export const GameTable: React.FC<GameTableProps> = ({
                     Tăng khó +1 bậc
                   </span>
                 )}
-                <span>Sự thật <strong className="text-blue-200">{chance(drawProbabilities.types.truth)}</strong></span>
-                <span>Thử thách <strong className="text-rose-200">{chance(drawProbabilities.types.dare)}</strong></span>
               </>
             ) : (
               <span className={`rounded-full border border-[#e8a48c]/25 bg-[#e8a48c]/10 px-2 py-0.5 text-xs font-bold text-[#f4e8ff] ${(luxuryDrawProbabilities?.finalCardChance ?? 0) <= 0 ? 'opacity-35' : ''}`}>
@@ -1699,12 +1771,19 @@ export const GameTable: React.FC<GameTableProps> = ({
               className="flex h-8 items-center gap-1 rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-white/25 hover:text-white"
             >
               <Info className="h-3 w-3" aria-hidden="true" />
-              {showOddsDetails ? 'Ẩn tỉ lệ' : 'Tỉ lệ sao'}
+              {showOddsDetails ? 'Ẩn tỉ lệ' : 'Tỉ lệ'}
             </button>
           </div>
         </div>
         {showOddsDetails && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
+            {journeyPhase === 'standard' && (
+              <>
+                <span className="text-xs font-semibold">Sự thật <strong className="text-blue-200">{chance(drawProbabilities.types.truth)}</strong></span>
+                <span className="text-xs font-semibold">Thử thách <strong className="text-rose-200">{chance(drawProbabilities.types.dare)}</strong></span>
+                <span className="h-3 w-px bg-white/15" aria-hidden="true" />
+              </>
+            )}
             {journeyPhase === 'standard'
               ? DIFFICULTY_STARS.map((star) => (
                 <span key={star} className={`text-xs font-semibold ${drawProbabilities.stars[star] <= 0 ? 'opacity-35' : ''}`}>
