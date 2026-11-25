@@ -80,18 +80,21 @@ Trò chơi gồm 4 trạng thái hành trình:
    - Lá bay về bảng của người thực hiện khi xong; dải **"Đến lượt…"** báo người kế tiếp.
 2. **Đếm giờ (`cardTimer.ts`)**:
    - Giá trị hợp lệ: số nguyên `1..3600` giây; `timerSeconds === null` tắt đếm giờ tường minh.
-   - **Dare**: không khai báo → mặc định **60 giây**. **Truth** và **Tư thế**: chỉ có đồng hồ khi lá khai báo `timerSeconds`.
+   - **Dare**: không khai báo → mặc định **60 giây**. **Truth**: chỉ có đồng hồ khi lá khai báo `timerSeconds`.
+   - **Tư thế**: lá không khai báo vẫn có **giờ gợi ý theo sao** (`suggestPositionSeconds`): 6★ 90s · 7★ 100s · 8★ 110s · 9★ 120s. Lá Have Sex không có. Đồng hồ là **tùy chọn** (nút "Đếm giờ"), không chặn nút hoàn thành.
    - Lá Standard có timer: phải bấm **"Bắt đầu · 60s"** trước khi xác nhận hoàn thành; vẫn **bỏ qua được trước khi bấm đếm giờ**.
-   - Đồng hồ **tạm dừng** khi mở bất kỳ hộp thoại nào (Luật, Bộ sưu tập, Thống kê, Tài khoản, Tạm dừng, Kết thúc ván).
-   - Lá Tư thế: đồng hồ là **tùy chọn** (nút "Bắt đầu đếm giờ"), không chặn nút hoàn thành.
+   - Khi đang đếm: **vòng giờ quanh lá** (nhìn được từ xa), nút **+15s / +30s** (tối đa 3600s, dùng được cả sau khi hết giờ), 5 giây cuối đổi màu và có tiếng tích, **giữ sáng màn hình** (`useWakeLock`, tự nhả sau 10 phút không chạm).
+   - Đồng hồ **tạm dừng** khi mở bất kỳ hộp thoại nào (Luật, Bộ sưu tập, Thống kê, Tài khoản, Tạm dừng, Kết thúc ván) và khi ẩn nhanh hoặc rời tab.
 3. **Xử lý kết quả (`CardResolutionEvent`)**:
    - Mỗi lần kết thúc lá bài sinh một event chống ghi trùng (idempotent) với trạng thái: `'completed' | 'skipped' | 'rerolled' | 'passed' | 'final_viewed'`.
    - **Hiệu ứng đặc biệt `pass_turn`** (ví dụ `g-d-14`): không có timer (`timerSeconds: null`), hiển thị nút **"Chuyển lượt"**, mở khóa lá trong Bộ sưu tập, **không cộng sao, không cộng thân mật, không phạt**.
    - **Hiệu ứng trang phục (`clothingEffect`)**: nếu lá có `remove_garment` (1 người hoặc cả 2) hoặc `swap_garments`, hệ thống mở dialog xử lý trang phục trước khi commit kết quả hoàn thành.
    - **Bỏ qua (`skipped`)**: mở `PenaltyPrompt`. Nếu bật `penaltyClothingEnabled`, Tim Hồng ≥ 20% và người chơi còn đồ hợp lệ, có thể chọn **"Bỏ một món đồ"** hoặc **"Không phạt"**: hai lựa chọn ngang hàng (dưới 20% lựa chọn cởi bị khóa kèm lý do).
+   - **Lá nhẹ hơn** (`selectLighterJourneyCard`): mỗi người **một lần mỗi ván, miễn phí**, đổi lá Standard đang mở (từ 2★) sang lá ở bậc sao thấp hơn gần nhất còn lá, ưu tiên cùng loại, không bao giờ là lá cởi đồ. Có ở dưới lá và trong hộp Bỏ qua. Không tính là bỏ qua, không phạt, không tiêu sao; lịch cởi đồ đang gắn trên lá được lùi như khi đổi bài.
+   - **Hoàn tác 5 giây** (nút trên thông báo hoặc phím `Z`): sau Hoàn thành/Bỏ qua lấy lại nguyên trạng lượt vừa rồi (%, sao, đồ, lịch cởi, bài đã dùng, đồng hồ). Lá mới chỉ vào Bộ sưu tập khi hết 5 giây, khi rút lá kế, hoặc khi rời trang. Rê chuột lên thông báo thì thời gian dừng lại.
    - **Tạm dừng** (nút hoặc phím `P`) mở bất kỳ lúc nào: chơi tiếp, bỏ lá đang mở **không phạt**, hoặc kết thúc ván.
    - **Cảnh cởi đồ**: bàn tối lại, đèn rọi người cởi → món đồ bay ra → cộng %/sao → chuyển lượt. Lượt bị khóa cho tới khi cảnh xong.
-   - **Ăn mừng theo cấp**: lá thường chỉ có tia sáng nhỏ; confetti dành cho món đồ đầu tiên, mốc 25/50/75/100%, mở Bộ Tư thế và lá cuối (`src/utils/confetti.ts`, vẽ ngay trên trang vì bản production làm rối mã khiến worker của thư viện không chạy).
+   - **Ăn mừng theo cấp**: lá thường chỉ có tia sáng nhỏ; confetti dành cho món đồ đầu tiên, mốc 25/50/75/100%, mở Bộ Tư thế và lá cuối (`src/utils/confetti.ts`, vẽ ngay trên trang: worker của thư viện dựng từ chính mã nguồn của nó nên hỏng khi bản build đổi tên biến).
    - **Mở khóa Bộ sưu tập**: Chỉ mở khóa thẻ khi **hoàn thành** (`completed`), **chuyển lượt hợp lệ** (`passed`), hoặc **xác nhận Have Sex** (`final_viewed`). Đổi bài (`rerolled`) hoặc bỏ qua (`skipped`) không mở khóa lá bài.
 4. **Đổi lượt**: Chuyển `currentPlayerIndex` (`0 ↔ 1`), tăng `currentRound`, cập nhật `clothingJourney` và `cardDirectorState`.
 
@@ -101,19 +104,26 @@ Trò chơi gồm 4 trạng thái hành trình:
 3. `'no_cards'`: Hết lá bài hợp lệ / cấu hình không còn trọng số khả dụng.
 4. `'manual'`: Bấm nút **"Kết thúc ván"** trên bàn chơi (có hộp xác nhận) bất kỳ lúc nào.
 
+- **Khép ván (`ClosingRitual`)** đứng trước bảng tổng kết: **nghỉ và ôm** (thở cùng nhau 1 phút nếu muốn) → **mỗi người chọn khoảnh khắc thích nhất** trong ván (`pickHighlights`, tối đa 9 lá, hoặc "Cả buổi tối") → **lời nhắn cho nhau** (tối đa 240 ký tự). Bước nào cũng bỏ qua được và lùi lại được (nút mũi tên hoặc nút Back của máy, lựa chọn vẫn giữ). Ván dừng tay khi chưa xong 5 lá thì vào thẳng tổng kết.
+- **Nhật ký ván (`gameJournal.ts`)**: chỉ lưu khi bấm "Lưu vào nhật ký"; nằm trong `localStorage` của máy (`tod_couples_journal`), tách theo tài khoản, tối đa 60 trang, xóa từng trang ở nút **Nhật ký** ngoài màn đầu. Không gửi lên server.
 - **Huy hiệu tình cảm trong `SummaryModal`**: 🌸 *Gắn kết nhẹ nhàng* (tới 40%) · 🔥 *Thân mật đắm say* (41–75%) · 💋 *Nồng nhiệt* (trên 75%) · ✨ *Đã mở Bộ Tư thế* · 💞 *Hành trình trọn vẹn* (đã mở lá cuối). Mỗi cách kết thúc có một câu riêng (`ENDING_COPY`).
-- Hiển thị thêm: tổng lá hoàn thành, món đã cởi, Tư thế đã làm; sao kiếm/còn và món đã cởi của từng người.
+- Hiển thị thêm: tổng lá hoàn thành, món đã cởi, Tư thế đã làm; sao kiếm/còn và món đã cởi của từng người; sao từ "Đoán ý" và các lần tiêu ví chung.
 - Giữa ván: **"Chơi tiếp"** là nút chính; **"Bỏ ván, chơi lại"** và **"Đăng xuất"** luôn hỏi lại. Sau khi ván kết thúc, con trỏ nằm ở tiêu đề nên bấm thừa Space không mở ván mới.
 
 ### 3.2b. Ván chơi được giữ lại (`gameSession.ts`)
-- Cả ván (lượt, %, đồ, sao, lá đang mở, lịch cởi đồ, bài đã dùng, màn chọn lá cuối) **tự lưu trên máy** (`localStorage`), hạn **24 giờ**, chỉ khôi phục cho đúng tài khoản; xóa khi ván kết thúc, bỏ ván hoặc đăng xuất. Không gửi lên server.
+- Cả ván (lượt, %, đồ, sao, lá đang mở, lịch cởi đồ, bài đã dùng, sự kiện, hai lá đang chọn, quyền "Lá nhẹ hơn", màn chọn lá cuối) **tự lưu trên máy** (`localStorage`), hạn **24 giờ**, chỉ khôi phục cho đúng tài khoản; xóa khi ván kết thúc, bỏ ván hoặc đăng xuất. Không gửi lên server.
 - **F5** mở lại đúng ván; mở trang ở tab khác hoặc sau khi đóng trình duyệt thì màn đầu có **"Tiếp tục ván"**. Lá đang mở được úp lại để không lộ nội dung.
 - Nút **Back** của trình duyệt đóng hộp thoại đang mở trước; ở bàn chơi thì hỏi trước khi kết thúc.
 - Lỗi giao diện không còn làm trắng trang: `ErrorBoundary` hiện "Bàn chơi gặp trục trặc" và cho khôi phục ván.
 - Lá mở lúc mất mạng được gộp với danh sách trên server khi cùng tài khoản (`unlockSync.ts`); cửa sổ Tài khoản báo phần chưa đồng bộ. Kiểm tra phiên và đồng bộ lá mở có giới hạn 8 giây, quá hạn thì vẫn vào chơi được.
 
 ### 3.2c. Phím tắt
-`Space`/`Enter` làm nút chính (rút, mở, bắt đầu, hoàn thành) · `S` bỏ qua · `R` đổi lá · `P` tạm dừng · `Esc` đóng hộp thoại. Nút chính tự nhận con trỏ ở mỗi trạng thái, nên chơi trọn ván chỉ bằng Space.
+`Space`/`Enter` làm nút chính (rút, mở, bắt đầu, hoàn thành) · `S` bỏ qua · `R` đổi lá · `Z` hoàn tác · `P` tạm dừng · `H` ẩn nhanh · `Esc` đóng hộp thoại. Nút chính tự nhận con trỏ ở mỗi trạng thái, nên chơi trọn ván chỉ bằng Space.
+
+### 3.2d. Riêng tư, hướng dẫn và âm thanh
+- **Ẩn nhanh** (nút con mắt hoặc phím `H`, kể cả khi đang mở hộp thoại): cả màn hình thành một trang "Ghi chú", tên và biểu tượng tab đổi theo, âm thanh tắt ngay, đồng hồ dừng, lá úp lại (nội dung rời khỏi DOM). Chỉ nút "Mở lại" hoặc `H` đưa ván trở lại. Rời tab giữa ván cũng úp lá và đổi tên tab.
+- **Hướng dẫn lần đầu** (`TableGuide`): ba bước ngay trên bàn ở lượt đầu của ván đầu tiên trên máy, bỏ qua được, xem lại trong Luật.
+- **Âm thanh** (`audio.ts`): mỗi sự kiện một tiếng riêng; nhạc nền tổng hợp tại chỗ, đổi sắc thái theo độ nóng của ván (ba bậc), nhỏ lại khi tạm dừng, có nút nhạc trên thanh đầu. Rung có công tắc riêng, không phụ thuộc tắt tiếng.
 
 ### 3.3. Quy ước nhận diện UI & Thang sao liên tục (`1★ – 10★`)
 - **Thanh Tim Hồng (`Standard`)**: Giữ duy nhất tông hồng pastel (`#f9a8d4 → #fecdd3`), chỉ thay đổi mức fill/glow/pulse theo %; phân tách rõ `💗 = Intimacy Progress` và `⭐ = Card Intensity`.
@@ -122,7 +132,7 @@ Trò chơi gồm 4 trạng thái hành trình:
 - **Thang sao liên tục không reset**:
   - **Standard (`1★–5★`)**: `1★` Khởi động → `2★` Flirt nhẹ → `3★` Thân mật → `4★` Nóng → `5★` Passionate cuối Standard.
   - **Position (`6★–10★`)**: `6★` Dạo đầu Tư thế → `7★` Kích thích sâu → `8★` Nồng nhiệt → `9★` Kỹ thuật cao → `10★` Tuyệt đỉnh / Finale.
-- **Standard Extension**: Nếu Tim Hồng chạm `100%` nhưng ít nhất một người vẫn còn đồ, ván chơi tiếp tục ở mốc `100%`, mỗi lá Dare kế tiếp mang yêu cầu cởi nốt (dải **"Kèm theo: …"**) cho tới khi **cả hai đã cởi hết (`empty`)**. Mô phỏng 1.500 ván: trung bình chỉ thêm **0,04 lượt** ở mốc 100%.
+- **Standard Extension**: Nếu Tim Hồng chạm `100%` nhưng ít nhất một người vẫn còn đồ, ván chơi tiếp tục ở mốc `100%`, mỗi lá Dare kế tiếp mang yêu cầu cởi nốt (dải **"Kèm theo: …"**) cho tới khi **cả hai đã cởi hết (`empty`)**. Mô phỏng 600 ván: trung bình chỉ thêm **0,1 lượt** ở mốc 100%.
 - **Thanh "Độ nóng"**: thay dải 7 con số bằng 5 nấc nhiệt; bấm **"Tỉ lệ"** để xem chi tiết. Bộ Tư thế có thang riêng màu tím (6★–10★); ở bước đồng thuận thang giữ mức 5. Khi một lượt rút bị bắt buộc là Dare để cởi đồ, bảng tỉ lệ hiển thị đúng tỉ lệ của lượt đó.
 
 ---
@@ -146,7 +156,18 @@ Mỗi lá Standard có độ khó `1★ – 5★` (nếu thiếu metadata: `gent
   - Mặc định trong mã nguồn (`DEFAULT_PROGRESSION_CONFIG`): **`+3%`** (trước đây `+8%`, làm ván ngắn lại khoảng 5 lá).
   - Cấu hình đang chạy lưu trên cloud (`seed-bundle.json` staging: `+2%`) — nên đặt **`3`** trong Admin để khớp mô phỏng.
   - Lưu ý: cởi đồ do **luật phạt (`penalty`)** hoặc **chuẩn bị trước Tư thế (`preparation`)** **không** nhận bonus này.
-- **Nhịp ván ~70 phút (mô phỏng 1.500 ván, cấu hình mặc định)**: ~23 lượt rút Tim Hồng (p10–p90: 20–26) + ~10 lượt Tư thế + màn chọn Have Sex; 100% ván vào được Tư thế, 0 ván kẹt.
+- **Nhịp ván (mô phỏng 600 ván với bộ bài đang chạy, 26/11/2026; giả định bỏ qua 8% lá, nhận 85% sự kiện, 45% câu "Đoán ý" trùng, tiêu sao vừa phải)**:
+  - **66 phút** nếu hai người theo nhịp riêng (p10–p90: 62–70; cùng giả định mà chưa có sự kiện và tiêu sao: 63), **60 phút** nếu làm đúng giờ gợi ý của lá Tư thế. Phần khép ván (nghỉ, khoảnh khắc, lời nhắn) nằm ngoài các số này, khoảng 3–4 phút.
+  - ~20 lượt rút Tim Hồng (p10–p90: 18–23) + ~10 lượt Tư thế + màn chọn Have Sex; 100% ván vào được Tư thế, 0 ván kẹt, không lặp lá trong ván.
+  - Sự kiện và "Lá nhẹ hơn" gần như không đụng nhịp cởi đồ: món đầu ở ~27% Tim Hồng (trung vị, như trước), cả hai còn nội y ở 71% (trước 70%), thêm 0,1 lượt ở mốc 100%.
+  - Vào Bộ Tư thế với ~45★ trong ví chung, cuối ván còn ~7★ (trước đây ~44★ không có chỗ tiêu).
+
+### 4.2b. Lượt sự kiện ở 25 / 50 / 75% (`gameEvents.ts`)
+Mỗi ván chơi mỗi loại một lần, thứ tự xáo từ đầu ván ("Nhân đôi" không rơi vào mốc 75%, vì từ đó Tim Hồng sẽ đầy trước khi lịch cởi đồ xong); hiện ra **trước lượt rút** đầu tiên sau khi qua mốc, "Bỏ qua" không bị phạt. Vượt hai mốc cùng lúc chỉ mời sự kiện của mốc sau.
+- **Đoán ý nhau (`match`)**: 2 câu hỏi theo độ nóng của mốc (`eventQuestions.ts`, 24 câu), mỗi người bí mật chọn trên cùng máy; mỗi câu trùng **+2★ cho cả hai** (`event_stars`).
+- **Đổi vai (`swap`)**: người kia xem hai lá rút theo đúng tỉ lệ của lượt (kể cả luật buộc Dare khi đến hẹn cởi đồ) và chọn lá người tới lượt sẽ làm; lá được chọn nằm úp. Chỉ lá được chọn tính là đã rút.
+- **Nhân đôi (`double`)**: lá **hoàn thành** kế tiếp cho gấp đôi % Tim Hồng (kể cả điểm cởi đồ). Bỏ qua lá thì quyền vẫn còn.
+- Sự kiện không đổi tỉ lệ rút và lịch cởi đồ.
 
 ### 4.3. Trần sao & Phối trọng số theo Trang phục (`WardrobeDifficultyProfile`)
 Hệ thống lấy trạng thái trang phục của **người mặc NHIỀU đồ nhất** (`dressed` > `underwear_only` > `empty`) làm chuẩn để tránh việc một người bị phạt cởi đồ sớm kéo cả bàn chơi lên bài 4–5★ quá nhanh:
@@ -205,7 +226,7 @@ $$\text{CardFactor}(c) = \text{HeatFactor} \times \text{Novelty} \times \text{Ta
 2. `swap_garments`: Mở `GarmentSwapDialog` — trao đổi nguyên tử 1 món đồ hợp lệ từ mỗi người (cho phép khác slot; nếu người nhận đang có đồ ở slot đó thì món cũ bị thay thế và ghi nhận `action: 'replaced'`).
 
 > **Mục tiêu**: mọi món đồ đều được cởi **qua lá bài** trong Tim Hồng; Bộ Tư thế chỉ mở khi cả hai đã cởi hết.
-> Mô phỏng 1.500 ván: lần cởi đầu tiên ở trung vị **28%** (p10: 22%), cả hai còn nội y ở trung vị **77%**; mỗi ván ≈ 5 lần cởi theo lịch + 1,5 lá cởi đồ cố định + 0,5 lần phạt. Ở chặng `80–99%` có ≈ 55% lá cởi đồ và ≈ 19% lá Sự thật (trước khi đổi nhịp: 81% và 7%).
+> Mô phỏng 600 ván (26/11/2026, % tính trước khi cộng điểm của lá): lần cởi đầu tiên ở trung vị **27%** (p10: 22%), cả hai còn nội y ở trung vị **71%**; mỗi ván ≈ 5,3 lần cởi theo lịch + 1,4 lá cởi đồ cố định + 0,4 lần phạt. Ở chặng `80–99%` có ≈ 17% lá Sự thật (trước khi đổi sang nhịp mềm: 7%).
 
 1. **Clothing Journey (`clothingJourney.ts`)**:
    - 6 cửa sổ thân mật: `[20–35]`, `[35–50]`, `[50–65]`, `[60–75]`, `[75–88]`, `[85–97]`, yêu cầu tối thiểu `2` lượt kể từ lần cởi đồ gần nhất (`turnsSinceClothing >= 2`).
@@ -270,8 +291,8 @@ $$\text{CardFactor}(c) = \text{HeatFactor} \times \text{Novelty} \times \text{Ta
 
 ## 7. Hệ Thống Ví Sao & Kỹ Năng Chiến Thuật (`rewards.ts`)
 
-- **Kiếm sao**: Ở giai đoạn Tim Hồng (`standard`), mỗi khi hoàn thành 1 thẻ, người rút nhận số sao bằng đúng bậc sao của thẻ đó (`1★` → `+1★`, ..., `5★` → `+5★`).
-- **2 Kỹ năng tiêu sao**:
+- **Kiếm sao**: Ở giai đoạn Tim Hồng (`standard`), mỗi khi hoàn thành 1 thẻ, người rút nhận số sao bằng đúng bậc sao của thẻ đó (`1★` → `+1★`, ..., `5★` → `+5★`). Sự kiện "Đoán ý" cho thêm +2★ mỗi người cho mỗi câu trùng.
+- **Tiêu sao**:
   1. **Đổi Bài (`reroll`) — Chi phí `8★`**:
      - Dùng khi đã rút lá bài nhưng không muốn làm (tối đa **1 lần/lượt**, `activeCardWasRerolled`).
      - Không tính là "Bỏ qua", không bị phạt trang phục, không mở khóa lá cũ và loại cứng lá cũ khỏi lượt đổi.
@@ -280,7 +301,12 @@ $$\text{CardFactor}(c) = \text{HeatFactor} \times \text{Novelty} \times \text{Ta
      - Dịch chuyển toàn bộ trọng số sao của lượt đó lên bậc sao khả dụng cao hơn kế tiếp.
      - **Hoàn trả tự động**: Nếu Tim Hồng chạm 100% khi vẫn còn `pendingDifficultyBoosts` chưa tiêu thụ, hệ thống tự động hoàn lại `10★` cho chủ sở hữu (`refunded_difficulty_boost`).
      - Nút chỉ hiện khi người chơi đủ sao (hoặc đang có lượt tăng khó chờ).
-  3. **Lật lá Have Sex (`final_card_flips`) — `10★` (2 lá) / `20★` (3 lá)**: dùng ví chung ở màn chọn lá cuối (xem 6.3).
+  3. **Ở Bộ Tư thế, bằng ví chung** (`spendSharedStars`: trừ người tới lượt trước, thiếu thì trừ người kia):
+     - **Đổi lá (`position_reroll`) — `8★`**: đổi lá Tư thế đang mở, mỗi lá một lần.
+     - **Rút 2 chọn 1 (`position_pair`) — `12★`**: hai lá mở cùng lúc, ưu tiên hai nhóm khác nhau; giữ một lá, lá kia về bộ bài.
+     - **Chọn nhóm (`position_family`) — `15★`**: lá kế tiếp thuộc nhóm tư thế đã chọn (chỉ hiện nhóm còn lá cho lượt và bậc sao hiện tại, cần ít nhất 2 nhóm).
+     - Lượt mua không bao giờ ra lá cuối; khi Luxury 100% thì không bán. Ba món này không đổi bảng tỉ lệ của lượt rút thường.
+  4. **Lật lá Have Sex (`final_card_flips`) — `10★` (2 lá) / `20★` (3 lá)**: dùng ví chung ở màn chọn lá cuối (xem 6.3).
 
 ---
 
@@ -294,9 +320,10 @@ npm run build                # Build production vào dist/
 npm run cf:migrate:local     # Áp migration D1 local
 npm run dev:cloud            # Chạy đầy đủ Pages Functions tại http://localhost:8788
 npm run lint                 # Kiểm tra TypeScript (tsc --noEmit)
-npm test                     # Chạy toàn bộ 22 bộ unit/integration test (kể cả drawAudit, gameSession, unlockSync, expansionCards)
+npm test                     # Chạy toàn bộ 24 bộ unit/integration test (kể cả drawAudit, gameSession, gameEvents, gameJournal, unlockSync)
 npm run smoke:game           # Chơi tự động ván thật trong Chrome: lỗi runtime, kẹt ván, nút ra ngoài màn hình, nút bị che, lá xê dịch
-npx tsx scripts/simulate-journey.ts --runs=1500   # Mô phỏng Monte Carlo nhịp ván (Tim Hồng → Tư thế → Have Sex)
+npx tsx scripts/simulate-journey.ts --runs=600    # Mô phỏng Monte Carlo cả ván: nhịp, thời lượng, sự kiện, tiêu sao
+                             # --live=FILE: bộ bài đang chạy (lưu từ GET /api/catalog) · --events=0 --lighter=0 --spend=0: không có các phần mới
 ```
 
 ### 8.2. Đồng bộ Catalog & Backup / Restore
@@ -309,7 +336,7 @@ npx tsx scripts/simulate-journey.ts --runs=1500   # Mô phỏng Monte Carlo nh�
 ### 8.3. Bảo mật nội dung thẻ & Tối ưu hiệu năng
 - **Bảo mật nội dung thẻ 2 lớp**:
   1. *DOM Content Guard*: Khi `isRevealed === false`, không đưa `card.content`, `hint`, `icon` vào DOM/React tree để ngăn xem trước qua DevTools.
-  2. *Bundle Obfuscation*: Production build dùng `vite-plugin-obfuscator` (`javascript-obfuscator`) mã hóa chuỗi trong `cards.ts` (`stringArray`, base64).
+  2. *Bundle Obfuscation*: Production build chỉ làm rối tệp `card-data` (dữ liệu thẻ và các hàm chạy lúc nạp thẻ) bằng `javascript-obfuscator` (`stringArray`, base64). Đổi tên hoặc chuyển các tệp này phải sửa `CARD_DATA_MODULES` trong `vite.config.ts`; thiếu tệp thì build báo lỗi.
 - **Nguyên tắc tối ưu hiệu năng**:
   - Gộp tính toán rút bài qua `getJourneyDrawAnalysis` (tránh lọc candidate pool 2 lần); chỉ gọi `getLuxuryDrawProbabilities` khi đang ở pha `position`.
   - Ổn định reference (`useMemo` cho `allCards`, `availableCards`, `journeySelectionOptions`) và bỏ qua `setState` khi polling trả về cùng `datasetRevision`.
@@ -322,7 +349,8 @@ npx tsx scripts/simulate-journey.ts --runs=1500   # Mô phỏng Monte Carlo nh�
   - Nhả focus khỏi nút sắp bị gỡ (`releaseActionFocus`) để trình duyệt không phải tính bố cục giữa chừng.
   - Thiết bị âm thanh được mở sau cú chạm đầu tiên (`soundEngine.warmUp`) thay vì ngay trong lần rút bài đầu; đang tắt tiếng thì không mở.
   - **Hộp thoại** hiện và tắt theo một chuyển động chung (`dialogPanelMotion` trong `motionTokens.ts`). `useDialogFocus` bù độ rộng thanh cuộn khi khóa cuộn, và đọc độ rộng đó qua `ResizeObserver` để không buộc tính bố cục.
-  - Đo ngày 25/11/2026 (trình duyệt mới, 1440×900): ba vòng xen kẽ với bản staging e09373c, khung hình/giây lúc rút 102–106 (staging 92–97), lúc hoàn thành 103–104 (96–99). Làm rối mã toàn bộ bundle vẫn khiến JS chạy chậm nhiều lần (bấm "Rút bài" ~140–170ms so với ~17ms ở bản thường). Chưa đổi cấu hình này.
+  - Đo ngày 25/11/2026 (trình duyệt mới, 1440×900): ba vòng xen kẽ với bản staging e09373c, khung hình/giây lúc rút 102–106 (staging 92–97), lúc hoàn thành 103–104 (96–99).
+§BUILD§
 
 ---
 

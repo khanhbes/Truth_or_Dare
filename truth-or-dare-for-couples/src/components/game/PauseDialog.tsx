@@ -57,7 +57,7 @@ export const PauseDialog: React.FC<PauseDialogProps> = ({ canDropCard, reduceMot
           </button>
         </div>
         <p className="mt-5 hidden text-xs leading-relaxed text-neutral-300 md:block">
-          Phím tắt: Space rút, mở, hoàn thành · S bỏ qua · R đổi lá · P tạm dừng
+          Phím tắt: Space rút, mở, hoàn thành · S bỏ qua · R đổi lá · Z hoàn tác · P tạm dừng · H ẩn nhanh
         </p>
       </motion.div>
     </div>,

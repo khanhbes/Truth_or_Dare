@@ -343,10 +343,12 @@ export const calculateCompletedCardIntimacy = (
   card: CardItem,
   config: ProgressionConfig,
   includeCardRemovalBonus: boolean,
+  /** 2 for the card after a "Nhân đôi" event turn. */
+  multiplier = 1,
 ): IntimacyGainResult => {
   const current = Math.max(0, Math.min(100, currentPercent));
-  const base = getCardIntimacyGain(card, config);
-  const removal = includeCardRemovalBonus ? config.cardRemovalBonus : 0;
+  const base = getCardIntimacyGain(card, config) * multiplier;
+  const removal = (includeCardRemovalBonus ? config.cardRemovalBonus : 0) * multiplier;
   const nextPercent = Math.min(100, current + base + removal);
   const totalApplied = nextPercent - current;
   const baseApplied = Math.min(base, totalApplied);
@@ -844,6 +846,73 @@ export const selectJourneyCard = (options: SelectJourneyCardOptions): JourneyCar
   return { card, nextUsedCardIds, availableTypes, didResetPool, probabilities };
 };
 
+/**
+ * One card a step easier than `card`: the next lower star that still has a card, same
+ * type first, and never one that takes off a garment. The weights of the current band do
+ * not count (a band may give 1★ no weight at all); novelty and pacing still do.
+ */
+export const selectLighterJourneyCard = (
+  options: SelectJourneyCardOptions,
+  card: CardItem,
+): JourneyCardSelectionResult => {
+  const random = options.random ?? Math.random;
+  const stars = deriveDifficultyStars(card);
+  const excludedCardIds = [...(options.excludedCardIds ?? []), card.id];
+  const analysis = getJourneyDrawAnalysis({ ...options, preferredType: null, difficultyBoost: false });
+  const used = new Set(options.usedCardIds);
+  const fresh = analysis.eligible.filter((item) =>
+    !used.has(item.id)
+    && !excludedCardIds.includes(item.id)
+    && !item.clothingEffect
+    && deriveDifficultyStars(item) < stars);
+  const sameType = fresh.filter((item) => item.type === card.type);
+  const pool = sameType.length > 0 ? sameType : fresh;
+  const target = Math.max(0, ...pool.map(deriveDifficultyStars));
+  const tier = pool.filter((item) => deriveDifficultyStars(item) === target);
+  const directorWeights = options.directorState
+    ? getDirectorWeights(tier, options.directorState, options.actorIndex, options.outfits, options.accountUnlockedCardIds)
+    : null;
+  const chosen = chooseDirectedCard(
+    tier,
+    new Map(tier.map((item) => [item.id, Math.max(0.001, directorWeights?.get(item.id) ?? 1)] as const)),
+    random,
+  );
+  return {
+    card: chosen,
+    nextUsedCardIds: chosen ? [...options.usedCardIds, chosen.id] : [...options.usedCardIds],
+    availableTypes: analysis.availableTypes,
+    didResetPool: false,
+    probabilities: analysis.probabilities,
+    errorCode: chosen ? undefined : 'no_cards',
+  };
+};
+
+/** Two different cards to choose from; `used` is the draw history once that card is kept. */
+export interface CardPair<Probabilities> {
+  options: readonly [{ card: CardItem; used: string[] }, { card: CardItem; used: string[] }];
+  probabilities: Probabilities;
+}
+
+/** Two cards from the normal draw, for the "Đổi vai" event turn. */
+export const selectJourneyPair = (options: SelectJourneyCardOptions): CardPair<JourneyDrawProbabilities> | null => {
+  const first = selectJourneyCard(options);
+  if (!first.card) return null;
+  const second = selectJourneyCard({
+    ...options,
+    usedCardIds: first.nextUsedCardIds,
+    excludedCardIds: [...(options.excludedCardIds ?? []), first.card.id],
+  });
+  if (!second.card) return null;
+  const keptFirst = first.nextUsedCardIds;
+  return {
+    options: [
+      { card: first.card, used: keptFirst },
+      { card: second.card, used: [...keptFirst.filter((id) => id !== first.card?.id), second.card.id] },
+    ],
+    probabilities: first.probabilities,
+  };
+};
+
 export interface LuxuryDrawProbabilities {
   stars: Record<PositionDifficultyStars, number>;
   /** Absolute probability of drawing a Have Sex card on this draw. */
@@ -861,6 +930,12 @@ export interface SelectLuxuryPositionCardOptions {
   accountUnlockedCardIds?: readonly string[] | ReadonlySet<string>;
   /** How many distinct face-down Have Sex cards to offer when the final is due. */
   finalCandidateCount?: number;
+  /** Cards that may not come up, even when the no-repeat pool starts again. */
+  excludedCardIds?: readonly string[];
+  /** Only this group of positions (see getPositionFamilyKey): the couple paid to choose it. */
+  familyKey?: string | null;
+  /** A paid draw never turns into the last choice. */
+  skipFinal?: boolean;
   random?: () => number;
 }
 
@@ -915,7 +990,7 @@ export const selectFinalChoiceCandidates = (
   return chosen;
 };
 
-const positionFamilyKey = (card: CardItem): string =>
+export const getPositionFamilyKey = (card: CardItem): string =>
   card.position?.family === 'other'
     ? `other:${card.position.customLabel?.trim() ?? ''}`
     : card.position?.family ?? 'other';
@@ -933,10 +1008,10 @@ const pickBalancedPositionCard = (
   if (starPool.length === 0) return null;
   const drawsByFamily = new Map<string, number>();
   for (const card of sessionCards) {
-    const family = positionFamilyKey(card);
+    const family = getPositionFamilyKey(card);
     drawsByFamily.set(family, (drawsByFamily.get(family) ?? 0) + 1);
   }
-  const families = Array.from(new Set(starPool.map(positionFamilyKey)));
+  const families = Array.from(new Set(starPool.map(getPositionFamilyKey)));
   const familyWeights = families.map((family) => 1 / (1 + (drawsByFamily.get(family) ?? 0)) ** 2);
   const total = familyWeights.reduce((sum, value) => sum + value, 0);
   let cursor = safeRandom(random) * total;
@@ -949,7 +1024,7 @@ const pickBalancedPositionCard = (
     }
   }
   return pickPreferringUnopened(
-    starPool.filter((card) => positionFamilyKey(card) === chosenFamily),
+    starPool.filter((card) => getPositionFamilyKey(card) === chosenFamily),
     unlocked,
     random,
   );
@@ -1053,7 +1128,11 @@ export const selectLuxuryPositionCard = (
     isCardEligibleForOutfits(card, options.actorIndex, options.outfits),
   );
   const finals = positionCards.filter((card) => card.position?.family === 'have_sex');
-  const nonFinalEligible = positionCards.filter((card) => card.position?.family !== 'have_sex');
+  const excluded = new Set(options.excludedCardIds ?? []);
+  const nonFinalEligible = positionCards.filter((card) =>
+    card.position?.family !== 'have_sex'
+    && !excluded.has(card.id)
+    && (!options.familyKey || getPositionFamilyKey(card) === options.familyKey));
   const offerFinal = (probabilities: LuxuryDrawProbabilities): LuxuryPositionSelectionResult => {
     const finalCandidates = selectFinalChoiceCandidates(finals, unlocked, finalCount, random);
     return {
@@ -1075,7 +1154,7 @@ export const selectLuxuryPositionCard = (
   if (didResetPool) candidates = [...nonFinalEligible];
   const probabilities = luxuryProbabilitiesForCandidates(
     candidates,
-    finals,
+    options.skipFinal ? [] : finals,
     options.luxuryPercent,
     options.config,
   );
@@ -1088,7 +1167,12 @@ export const selectLuxuryPositionCard = (
     errorCode,
   });
   if (!isLuxuryProgressionConfigPlayable(options.config)) return failure('no_progress_gain');
-  if (options.luxuryPercent >= 80 && finals.length > 0 && safeRandom(random) < probabilities.finalCardChance) {
+  if (
+    !options.skipFinal
+    && options.luxuryPercent >= 80
+    && finals.length > 0
+    && safeRandom(random) < probabilities.finalCardChance
+  ) {
     return offerFinal(probabilities);
   }
   if (candidates.length === 0) return failure('no_cards');
@@ -1127,6 +1211,66 @@ export const selectLuxuryPositionCard = (
     : [...options.usedCardIds];
   if (!nextUsedCardIds.includes(card.id)) nextUsedCardIds.push(card.id);
   return { card, nextUsedCardIds, didResetPool, probabilities, missingFinalCard: false };
+};
+
+/**
+ * Two different Position cards, the second one from another group when possible (the
+ * first pick counts as drawn). Never the last choice: the couple paid for two cards.
+ */
+export const selectPositionPair = (
+  options: SelectLuxuryPositionCardOptions,
+): CardPair<LuxuryDrawProbabilities> | null => {
+  if (options.luxuryPercent >= 100) return null;
+  const first = selectLuxuryPositionCard({ ...options, skipFinal: true });
+  if (!first.card) return null;
+  const second = selectLuxuryPositionCard({
+    ...options,
+    skipFinal: true,
+    usedCardIds: first.nextUsedCardIds,
+    excludedCardIds: [...(options.excludedCardIds ?? []), first.card.id],
+  });
+  if (!second.card) return null;
+  const keptFirst = first.nextUsedCardIds;
+  return {
+    options: [
+      { card: first.card, used: keptFirst },
+      { card: second.card, used: [...keptFirst.filter((id) => id !== first.card?.id), second.card.id] },
+    ],
+    probabilities: first.probabilities,
+  };
+};
+
+export interface PositionFamilyOption {
+  key: string;
+  /** Any card of the group, for its label. */
+  sample: CardItem;
+  /** Cards of the group this player can still draw this session. */
+  count: number;
+}
+
+/** Groups of positions that still have an unplayed card for this player's turn. */
+export const getPositionFamilyOptions = (
+  options: Pick<SelectLuxuryPositionCardOptions, 'cards' | 'actorIndex' | 'outfits' | 'usedCardIds' | 'excludedCardIds'>,
+): PositionFamilyOption[] => {
+  if (!options.outfits.every((outfit) => getOutfitStage(outfit) === 'empty')) return [];
+  const blocked = new Set([...options.usedCardIds, ...(options.excludedCardIds ?? [])]);
+  const groups = new Map<string, PositionFamilyOption>();
+  for (const card of options.cards) {
+    if (
+      getCardDeck(card) !== 'position'
+      || !card.position
+      || card.position.family === 'have_sex'
+      || blocked.has(card.id)
+      || !positionRecipientMatches(card, options.actorIndex)
+      || !isCardEligibleForOutfits(card, options.actorIndex, options.outfits)
+    ) continue;
+    const key = getPositionFamilyKey(card);
+    const group = groups.get(key);
+    if (group) group.count += 1;
+    else groups.set(key, { key, sample: card, count: 1 });
+  }
+  return [...groups.values()].sort((a, b) =>
+    (a.sample.position?.orderGroup ?? 0) - (b.sample.position?.orderGroup ?? 0) || a.key.localeCompare(b.key));
 };
 
 const weightedAverageStar = <Star extends number>(

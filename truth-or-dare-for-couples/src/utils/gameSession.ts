@@ -20,6 +20,7 @@ import {
   createDynamicClothingSchedule,
   type DynamicClothingSchedulerState,
 } from './dynamicClothingScheduler';
+import { hydrateGameEvents, type GameEventsState } from './gameEvents';
 import { EMPTY_POSITION_SESSION_STATS } from './gameResolution';
 import { DEFAULT_PLAYER_1, DEFAULT_PLAYER_2, hydratePlayer } from './playerStorage';
 import { createPlayerRewardState } from './rewards';
@@ -42,6 +43,19 @@ export interface FinalChoiceSnapshot {
   revealedIds: string[];
 }
 
+export interface PairOption {
+  card: CardItem;
+  /** Draw history of the deck once this card is kept. */
+  used: string[];
+}
+
+/** Two cards face up; one of them is kept. */
+export interface PairSnapshot {
+  /** stars: the couple paid for two Position cards · event: the partner picks for the player. */
+  source: 'stars' | 'event';
+  options: [PairOption, PairOption];
+}
+
 /** The part of a game that lives inside the game table. */
 export interface TableSnapshot {
   usedCardIds: string[];
@@ -54,6 +68,10 @@ export interface TableSnapshot {
   activeCardWasRerolled: boolean;
   clothingTrigger: { itemId: string; targetIndex: PlayerIndex } | null;
   finalChoice: FinalChoiceSnapshot | null;
+  events: GameEventsState;
+  /** Whether each player has already swapped a card for a lighter one. */
+  lighterUsed: [boolean, boolean];
+  pair: PairSnapshot | null;
 }
 
 export interface GameSessionState {
@@ -76,8 +94,13 @@ export interface GameSessionState {
   playerRewards: [PlayerRewardState, PlayerRewardState];
   pendingDifficultyBoosts: PendingDifficultyBoost[];
   rewardEvents: RewardEvent[];
+  /** When the couple sat down; null in games saved before this was kept. */
+  startedAt: number | null;
   table: TableSnapshot;
 }
+
+/** The part of a game that lives outside the table; it is enough to take back a turn. */
+export type SessionCheckpoint = Omit<GameSessionState, 'table'>;
 
 export interface SavedGameSession extends GameSessionState {
   version: typeof GAME_SESSION_VERSION;
@@ -98,6 +121,12 @@ export const serializeGameSession = (state: GameSessionState, now = Date.now()):
     activeCard: state.table.activeCard ? withoutImage(state.table.activeCard) : null,
     finalChoice: state.table.finalChoice
       ? { ...state.table.finalChoice, candidates: state.table.finalChoice.candidates.map(withoutImage) }
+      : null,
+    pair: state.table.pair
+      ? {
+          ...state.table.pair,
+          options: state.table.pair.options.map((option) => ({ ...option, card: withoutImage(option.card) })) as PairSnapshot['options'],
+        }
       : null,
   },
   version: GAME_SESSION_VERSION,
@@ -181,6 +210,17 @@ const hydrateFinalChoice = (value: unknown): FinalChoiceSnapshot | null => {
   return { candidates, flips, revealedIds: strings(value.revealedIds).filter((id) => ids.has(id)) };
 };
 
+const hydratePair = (value: unknown): PairSnapshot | null => {
+  if (!isRecord(value) || !Array.isArray(value.options) || value.options.length !== 2) return null;
+  const options = value.options.map((option) => {
+    const card = isRecord(option) ? hydrateCard(option.card) : null;
+    return card ? { card, used: strings((option as Record<string, unknown>).used) } : null;
+  });
+  const [first, second] = options;
+  if (!first || !second) return null;
+  return { source: value.source === 'event' ? 'event' : 'stars', options: [first, second] };
+};
+
 const hydrateStats = (value: unknown): PositionSessionStats => isRecord(value)
   ? { drawn: count(value.drawn), opened: count(value.opened), completed: count(value.completed), skipped: count(value.skipped) }
   : { ...EMPTY_POSITION_SESSION_STATS };
@@ -205,6 +245,8 @@ export const hydrateGameSession = (value: unknown, now = Date.now()): SavedGameS
   const trigger = table.clothingTrigger;
   const activeCard = hydrateCard(table.activeCard);
   const finalChoice = hydrateFinalChoice(table.finalChoice);
+  const intimacyPercent = percent(value.intimacyPercent);
+  const lighterUsed = Array.isArray(table.lighterUsed) ? table.lighterUsed : [];
   // The final phase only makes sense with its three cards or the chosen one on the table.
   const journeyPhase = value.journeyPhase === 'final' && !finalChoice && activeCard?.position?.family !== 'have_sex'
     ? 'position'
@@ -221,7 +263,7 @@ export const hydrateGameSession = (value: unknown, now = Date.now()): SavedGameS
     currentRound: Math.max(1, count(value.currentRound)),
     outfitStates,
     clothingRemovalEvents: records<ClothingRemovalEvent>(value.clothingRemovalEvents),
-    intimacyPercent: percent(value.intimacyPercent),
+    intimacyPercent,
     luxuryIntimacyPercent: percent(value.luxuryIntimacyPercent),
     intimacyEvents: records<IntimacyEvent>(value.intimacyEvents),
     journeyPhase,
@@ -232,6 +274,9 @@ export const hydrateGameSession = (value: unknown, now = Date.now()): SavedGameS
     pendingDifficultyBoosts: records<PendingDifficultyBoost>(value.pendingDifficultyBoosts)
       .filter((boost) => isPlayerIndex(boost.ownerPlayerIndex) && isPlayerIndex(boost.targetPlayerIndex)),
     rewardEvents: records<RewardEvent>(value.rewardEvents),
+    startedAt: typeof value.startedAt === 'number' && value.startedAt > 0 && value.startedAt <= value.savedAt
+      ? value.startedAt
+      : null,
     table: {
       usedCardIds: strings(table.usedCardIds),
       clothingJourney: hydrateJourney(table.clothingJourney),
@@ -244,6 +289,10 @@ export const hydrateGameSession = (value: unknown, now = Date.now()): SavedGameS
         ? { itemId: trigger.itemId, targetIndex: trigger.targetIndex }
         : null,
       finalChoice,
+      events: hydrateGameEvents(table.events, intimacyPercent),
+      lighterUsed: [lighterUsed[0] === true, lighterUsed[1] === true],
+      // A card on the table means the pair was already decided.
+      pair: activeCard || finalChoice ? null : hydratePair(table.pair),
     },
   };
 };

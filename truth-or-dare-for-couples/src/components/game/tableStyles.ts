@@ -17,6 +17,10 @@ export const BUTTON_QUIET = `flex min-h-9 min-w-0 items-center justify-center ga
 export const cardUnit = (px: number, minPx = 0): string =>
   minPx > 0 ? `max(${minPx}px, calc(${px.toFixed(2)} * 100cqh / 480))` : `calc(${px.toFixed(2)} * 100cqh / 480)`;
 
+/** "45s" up to a minute, "1:30" from there on. */
+export const formatSeconds = (seconds: number): string =>
+  seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
 export const POSITION_RECIPIENT_LABELS = { male: 'Lượt Nam', female: 'Lượt Nữ', both: 'Cả hai lượt' } as const;
 
 const POSITION_FAMILY_LABELS = {

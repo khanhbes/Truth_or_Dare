@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
 import { motion, type Variants } from 'motion/react';
-import { EyeOff, Heart, RotateCcw, Shirt, Timer as TimerIcon } from 'lucide-react';
+import { EyeOff, Heart, Pause, Play, RotateCcw, Shirt, Timer as TimerIcon } from 'lucide-react';
 import type { CardItem } from '../../types';
 import { LEVEL_INFO } from '../../data/cards';
 import { CARD_DENSITY_ICON_SCALE, getCardDensity, getCardTextScale } from '../../utils/cardDensity';
+import { TIMER_EXTENSIONS } from '../../utils/cardTimer';
 import { deriveDifficultyStars, derivePositionDifficultyStars, getCardDeck } from '../../utils/progression';
 import { DURATION, EASE_IN_OUT, EASE_OUT } from '../../utils/motionTokens';
 import { autoAssignIcon, getCardIcon } from '../CardIcons';
 import { useCardContentFit } from '../useCardContentFit';
 import { CardBack } from './CardBack';
-import { FOCUS_RING, cardUnit, getPositionFamilyLabel } from './tableStyles';
+import { FOCUS_RING, cardUnit, formatSeconds, getPositionFamilyLabel } from './tableStyles';
 
 /** Where the card goes when its turn is over. */
 export type CardExit = 'to-left' | 'to-right' | 'skipped' | 'rerolled';
 
 export interface TableCardTimer {
   seconds: number;
+  /** The whole countdown with the time added on the way: a full ring. */
+  total: number;
   started: boolean;
   running: boolean;
 }
@@ -35,7 +38,12 @@ interface TableCardProps {
   reduceMotion: boolean;
   onToggleFavorite: () => void;
   onTimerControl: () => void;
+  onTimerExtend: (seconds: number) => void;
 }
+
+/** The last seconds are counted out loud, in red. */
+const URGENT_SECONDS = 5;
+const TIMER_BUTTON = `flex min-h-9 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold tabular-nums transition-colors ${FOCUS_RING}`;
 
 // Whole transform strings run on the compositor, so the card keeps moving smoothly
 // while the page works out the next turn.
@@ -77,6 +85,7 @@ export const TableCard: React.FC<TableCardProps> = ({
   reduceMotion,
   onToggleFavorite,
   onTimerControl,
+  onTimerExtend,
 }) => {
   const isPosition = getCardDeck(card) === 'position';
   const isFinal = card.position?.family === 'have_sex';
@@ -99,6 +108,8 @@ export const TableCard: React.FC<TableCardProps> = ({
   const { ref: scrollRef, hasMoreBelow } = useCardContentFit<HTMLDivElement>(`${card.id}|${revealed}|${flipped}|${clothingNote ?? ''}`);
   const LineIcon = card.customImage ? null : getCardIcon(card.icon || autoAssignIcon(card.content));
   const timeUp = timer?.seconds === 0;
+  const showTimer = timer !== null && revealed && !isFinal;
+  const urgent = timer !== null && timer.started && timer.seconds > 0 && timer.seconds <= URGENT_SECONDS;
   const grows = isFinal && flipped && !reduceMotion;
   // Only how the card first showed up matters here, not what happens to it later.
   const [appearsFaceUp] = useState(() => (flipped || reduceMotion) && !grows);
@@ -130,6 +141,12 @@ export const TableCard: React.FC<TableCardProps> = ({
           className={`table-card__side table-card-face game-card ${isMythic ? 'card-position-rare' : isPosition ? 'card-position' : `card-${card.level}`} ${!isPosition && card.level !== 'gentle' ? 'card-wave-pattern' : ''}`}
         >
           {flipped && !reduceMotion && <span key={`sheen-${card.id}-${revealed}`} className="card-sheen" aria-hidden="true" />}
+          {showTimer && timer.started && (
+            <svg className="table-card__ring" data-urgent={urgent || timeUp || undefined} aria-hidden="true">
+              <rect className="table-card__ring-track" />
+              <rect pathLength={1} style={{ strokeDashoffset: 1 - Math.min(1, timer.seconds / Math.max(1, timer.total)) }} />
+            </svg>
+          )}
           {!isPosition && card.level !== 'gentle' && (
             <>
               <span className="card-corner-deco top-2 left-2.5" aria-hidden="true">♠ ♥</span>
@@ -225,30 +242,53 @@ export const TableCard: React.FC<TableCardProps> = ({
               )}
             </div>
 
-            {timer && revealed && !isFinal && (
+            {showTimer && (
               <div className="table-card__timer">
-                <p style={{ fontSize: cardUnit(14, 13) }} className={`flex items-center gap-2 font-semibold ${timeUp ? 'text-rose-200' : 'text-amber-200'}`}>
-                  <TimerIcon className={`h-4 w-4 ${timer.running && !reduceMotion ? 'animate-pulse' : ''}`} aria-hidden="true" />
-                  {timeUp ? 'Hết giờ' : 'Thời gian'}
-                  <span className="text-lg font-bold tabular-nums text-white">{timer.seconds}s</span>
+                <p style={{ fontSize: cardUnit(14, 13) }} className={`flex min-w-0 items-center gap-2 font-semibold ${urgent || timeUp ? 'text-rose-200' : 'text-amber-200'}`}>
+                  <TimerIcon className={`h-4 w-4 shrink-0 ${timer.running && !reduceMotion ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                  {!timer.started && <span className="table-card__timer-word">{isPosition ? 'Gợi ý' : 'Thời gian'}</span>}
+                  {timeUp ? 'Hết giờ' : (
+                    <span key={urgent ? timer.seconds : 'calm'} className={`text-lg font-bold tabular-nums text-white ${urgent ? 'table-card__beat' : ''}`}>
+                      {formatSeconds(timer.seconds)}
+                    </span>
+                  )}
                 </p>
                 {timer.started ? (
-                  <button
-                    type="button"
-                    onClick={onTimerControl}
-                    aria-label={timeUp ? 'Đếm lại thời gian thử thách' : timer.running ? 'Tạm dừng đếm giờ' : 'Tiếp tục đếm giờ'}
-                    className={`flex min-h-9 items-center gap-1.5 rounded-lg border border-white/20 bg-black/30 px-3 text-xs font-semibold text-neutral-100 hover:border-white/40 ${FOCUS_RING}`}
-                  >
-                    {timeUp && <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
-                    {timeUp ? 'Đếm lại' : timer.running ? 'Dừng đếm' : 'Đếm tiếp'}
-                  </button>
+                  <div className="flex shrink-0 gap-1.5">
+                    {TIMER_EXTENSIONS.map((extra) => (
+                      <button
+                        key={extra}
+                        type="button"
+                        data-action={`extend-${extra}`}
+                        onClick={() => onTimerExtend(extra)}
+                        aria-label={`Thêm ${extra} giây`}
+                        className={`${TIMER_BUTTON} border-white/15 bg-black/25 text-neutral-100 hover:border-white/40`}
+                      >
+                        +{extra}s
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={onTimerControl}
+                      aria-label={timeUp ? 'Đếm lại từ đầu' : timer.running ? 'Tạm dừng đếm giờ' : 'Tiếp tục đếm giờ'}
+                      className={`${TIMER_BUTTON} border-white/25 bg-black/35 text-neutral-100 hover:border-white/45`}
+                    >
+                      {timeUp
+                        ? <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                        : timer.running
+                          ? <Pause className="h-3.5 w-3.5" aria-hidden="true" />
+                          : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
+                      <span className="table-card__timer-word">{timeUp ? 'Lại' : timer.running ? 'Dừng' : 'Tiếp'}</span>
+                    </button>
+                  </div>
                 ) : isPosition ? (
                   <button
                     type="button"
+                    data-action="start-hint"
                     onClick={onTimerControl}
-                    className={`flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e2c275]/40 bg-[#e2c275]/10 px-3 text-xs font-semibold text-[#fff4d6] hover:bg-[#e2c275]/20 ${FOCUS_RING}`}
+                    className={`${TIMER_BUTTON} shrink-0 border-[#e2c275]/40 bg-[#e2c275]/10 text-[#fff4d6] hover:bg-[#e2c275]/20`}
                   >
-                    <TimerIcon className="h-3.5 w-3.5" aria-hidden="true" /> Bắt đầu đếm giờ
+                    <Play className="h-3.5 w-3.5" aria-hidden="true" /> Đếm giờ
                   </button>
                 ) : (
                   <span className="rounded-full border border-amber-300/25 bg-amber-500/[0.1] px-2.5 py-1 text-xs font-semibold text-amber-100">

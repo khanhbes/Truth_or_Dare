@@ -1,7 +1,13 @@
 import React from 'react';
-import { CheckCircle2, Eye, FastForward, Shuffle, Sparkles, Timer as TimerIcon, TrendingUp, XCircle } from 'lucide-react';
-import { DIFFICULTY_BOOST_STAR_COST, REROLL_STAR_COST } from '../../utils/rewards';
-import { BUTTON_PRIMARY, BUTTON_PRIMARY_LUXURY, BUTTON_QUIET, BUTTON_SECONDARY } from './tableStyles';
+import { CheckCircle2, Eye, FastForward, Feather, Layers, Layers2, Shuffle, Sparkles, Timer as TimerIcon, TrendingUp, XCircle } from 'lucide-react';
+import {
+  DIFFICULTY_BOOST_STAR_COST,
+  POSITION_FAMILY_STAR_COST,
+  POSITION_PAIR_STAR_COST,
+  POSITION_REROLL_STAR_COST,
+  REROLL_STAR_COST,
+} from '../../utils/rewards';
+import { BUTTON_PRIMARY, BUTTON_PRIMARY_LUXURY, BUTTON_QUIET, BUTTON_SECONDARY, formatSeconds } from './tableStyles';
 
 interface IdleActions {
   state: 'idle';
@@ -9,8 +15,12 @@ interface IdleActions {
   playerName: string;
   /** Extra difficulty for the partner's next turn; null hides the option. */
   boost: { targetName: string; pending: boolean; affordable: boolean } | null;
+  /** The shared wallet, for the paid draws of the Position deck; null hides them. */
+  sharedBalance: number | null;
   onDraw: () => void;
   onBoost: () => void;
+  onPair: () => void;
+  onFamily: () => void;
 }
 
 interface AnswerActions {
@@ -20,8 +30,21 @@ interface AnswerActions {
   skipLabel: string;
   completeLabel: string;
   reroll: { playerName: string; balance: number; used: boolean };
+  /** The free swap for an easier card, once per player and game. */
+  lighter: boolean;
   onSkip: () => void;
   onStart: () => void;
+  onComplete: () => void;
+  onReroll: () => void;
+  onLighter: () => void;
+}
+
+interface PositionActions {
+  state: 'position';
+  completeLabel: string;
+  /** Paid by the shared wallet, once per card. */
+  reroll: { balance: number; used: boolean } | null;
+  onSkip: () => void;
   onComplete: () => void;
   onReroll: () => void;
 }
@@ -32,7 +55,7 @@ type TableActionsProps =
   | { state: 'choose'; onBack: () => void }
   | { state: 'hidden'; luxury: boolean; onReveal: () => void }
   | AnswerActions
-  | { state: 'position'; completeLabel: string; onSkip: () => void; onComplete: () => void }
+  | PositionActions
   | { state: 'final'; onFinish: () => void }
   | { state: 'none' };
 
@@ -61,7 +84,7 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
                 onClick={props.onBoost}
                 disabled={props.boost.pending || !props.boost.affordable}
                 className={BUTTON_QUIET}
-                aria-label={`Tăng một bậc độ khó cho lượt kế tiếp của ${props.boost.targetName}, tốn ${DIFFICULTY_BOOST_STAR_COST} sao`}
+                aria-label={`Tăng khó ${props.boost.targetName}: lượt kế tiếp khó hơn một bậc, tốn ${DIFFICULTY_BOOST_STAR_COST} sao`}
               >
                 <TrendingUp className="h-3.5 w-3.5 shrink-0 text-orange-200" aria-hidden="true" />
                 <span className="truncate">
@@ -71,6 +94,37 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
                 </span>
               </button>
             )}
+            {props.sharedBalance !== null && (props.sharedBalance < POSITION_PAIR_STAR_COST ? (
+              <span className="flex items-center gap-1.5 text-xs text-neutral-300">
+                <Layers2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                Rút 2 chọn 1 cần {POSITION_PAIR_STAR_COST}★ · ví chung {props.sharedBalance}★
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  data-action="pair"
+                  onClick={props.onPair}
+                  className={BUTTON_QUIET}
+                  aria-label={`Rút 2 chọn 1: mở hai lá rồi giữ một, tốn ${POSITION_PAIR_STAR_COST} sao của ví chung`}
+                >
+                  <Layers2 className="h-3.5 w-3.5 shrink-0 text-[#ead2ff]" aria-hidden="true" />
+                  <span className="truncate">Rút 2 chọn 1 · {POSITION_PAIR_STAR_COST}★</span>
+                </button>
+                {props.sharedBalance >= POSITION_FAMILY_STAR_COST && (
+                  <button
+                    type="button"
+                    data-action="family-open"
+                    onClick={props.onFamily}
+                    className={BUTTON_QUIET}
+                    aria-label={`Chọn nhóm tư thế cho lá kế tiếp, tốn ${POSITION_FAMILY_STAR_COST} sao của ví chung`}
+                  >
+                    <Layers className="h-3.5 w-3.5 shrink-0 text-[#f7e7b0]" aria-hidden="true" />
+                    <span className="truncate">Chọn nhóm · {POSITION_FAMILY_STAR_COST}★</span>
+                  </button>
+                )}
+              </>
+            ))}
           </div>
         </div>
       );
@@ -120,7 +174,7 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
             </button>
             {mustStart ? (
               <button type="button" data-action="start-timer" data-main-action onClick={props.onStart} className={BUTTON_PRIMARY}>
-                <TimerIcon className="h-5 w-5 shrink-0" aria-hidden="true" /> Bắt đầu · {props.startSeconds}s
+                <TimerIcon className="h-5 w-5 shrink-0" aria-hidden="true" /> Bắt đầu · {formatSeconds(props.startSeconds ?? 0)}
               </button>
             ) : (
               <button type="button" data-action="complete" data-main-action onClick={props.onComplete} className={BUTTON_PRIMARY}>
@@ -130,12 +184,24 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
             )}
           </div>
           <div className="table-actions__more">
+            {props.lighter && (
+              <button
+                type="button"
+                data-action="lighter"
+                onClick={props.onLighter}
+                className={BUTTON_QUIET}
+                aria-label="Lá nhẹ hơn: đổi miễn phí, mỗi người một lần trong ván"
+              >
+                <Feather className="h-3.5 w-3.5 shrink-0 text-emerald-200" aria-hidden="true" />
+                <span className="truncate">Lá nhẹ hơn</span>
+              </button>
+            )}
             {reroll.used ? (
               <span className="text-xs text-neutral-300">Đã đổi bài trong lượt này</span>
             ) : reroll.balance < REROLL_STAR_COST ? (
-              <span className="flex items-center gap-1.5 text-xs text-neutral-300">
-                <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
-                Đổi lá cần {REROLL_STAR_COST}★ · {reroll.playerName} có {reroll.balance}★
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-300">
+                <Shuffle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">Đổi lá cần {REROLL_STAR_COST}★ · {reroll.playerName} có {reroll.balance}★</span>
               </span>
             ) : (
               <button
@@ -143,7 +209,7 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
                 data-action="reroll"
                 onClick={props.onReroll}
                 className={BUTTON_QUIET}
-                aria-label={`Đổi lá bài, tốn ${REROLL_STAR_COST} sao của ${reroll.playerName}`}
+                aria-label={`Đổi lá khác, tốn ${REROLL_STAR_COST} sao của ${reroll.playerName}`}
               >
                 <Shuffle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span className="truncate">Đổi lá khác · {REROLL_STAR_COST}★ của {reroll.playerName}</span>
@@ -166,7 +232,19 @@ export const TableActions: React.FC<TableActionsProps> = (props) => {
             </button>
           </div>
           <div className="table-actions__more">
-            <span className="text-xs text-neutral-300">Bỏ qua không bị phạt</span>
+            <span className="shrink-0 text-xs text-neutral-300">Bỏ qua không bị phạt</span>
+            {props.reroll && !props.reroll.used && props.reroll.balance >= POSITION_REROLL_STAR_COST && (
+              <button
+                type="button"
+                data-action="reroll"
+                onClick={props.onReroll}
+                className={BUTTON_QUIET}
+                aria-label={`Đổi lá khác, tốn ${POSITION_REROLL_STAR_COST} sao của ví chung`}
+              >
+                <Shuffle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">Đổi lá khác · {POSITION_REROLL_STAR_COST}★ ví chung</span>
+              </button>
+            )}
           </div>
         </div>
       );

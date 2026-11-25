@@ -7,6 +7,9 @@ import { GameTable } from './components/GameTable';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SummaryModal } from './components/SummaryModal';
 import { RulesModal } from './components/RulesModal';
+import { ClosingRitual, type ClosingResult } from './components/ClosingRitual';
+import { JournalModal } from './components/JournalModal';
+import { QuickHide, useDiscreetTab, useQuickHideKey } from './components/QuickHide';
 import {
   CardItem,
   CardResolutionEvent,
@@ -77,10 +80,18 @@ import {
   clearGameSession,
   loadGameSession,
   saveGameSession,
-  type GameSessionState,
   type SavedGameSession,
+  type SessionCheckpoint,
   type TableSnapshot,
 } from './utils/gameSession';
+import {
+  addJournalEntry,
+  deleteJournalEntry,
+  getGameMinutes,
+  loadJournal,
+  pickHighlights,
+  type JournalEntry,
+} from './utils/gameJournal';
 import { soundEngine } from './utils/audio';
 import { resolveUnlockedCardsOnLoad } from './utils/unlockSync';
 import {
@@ -128,6 +139,9 @@ type AppMode = 'player' | 'developer';
 const GUEST_TAB_KEY = 'tod_guest_tab';
 /** This tab only: a game was running, so a refresh goes straight back to it. */
 const GAME_TAB_KEY = 'tod_game_tab';
+
+/** A game stopped by hand before this many cards ends without the closing ritual. */
+const CLOSING_MIN_CARDS = 5;
 
 const readTabFlag = (key: string): boolean => {
   try { return sessionStorage.getItem(key) === '1'; } catch { return false; }
@@ -183,6 +197,13 @@ export default function App() {
   const [collectionReturnScreen, setCollectionReturnScreen] = useState<'intro' | 'game'>('intro');
   const [showSummary, setShowSummary] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [showClosing, setShowClosing] = useState(false);
+  const [closingBackId, setClosingBackId] = useState(0);
+  const [showJournal, setShowJournal] = useState(false);
+  const [journalSaved, setJournalSaved] = useState(false);
+  const [quickHidden, setQuickHidden] = useState(false);
+  const [tabHidden, setTabHidden] = useState(false);
+  const [guideRequestId, setGuideRequestId] = useState(0);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [forceShowLoginScreen, setForceShowLoginScreen] = useState(false);
   const [gameEndReason, setGameEndReason] = useState<GameEndReason | null>(null);
@@ -286,6 +307,7 @@ export default function App() {
   const [playerRewards, setPlayerRewards] = useState<[PlayerRewardState, PlayerRewardState]>(createRewardStates);
   const [pendingDifficultyBoosts, setPendingDifficultyBoosts] = useState<PendingDifficultyBoost[]>([]);
   const [rewardEvents, setRewardEvents] = useState<RewardEvent[]>([]);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   // A running game is kept on this device (see utils/gameSession).
   const [savedGame, setSavedGame] = useState<SavedGameSession | null>(() =>
@@ -294,7 +316,6 @@ export default function App() {
   const [resumeSnapshot, setResumeSnapshot] = useState<TableSnapshot | null>(null);
   const [gameId, setGameId] = useState(0);
   const [endRequestId, setEndRequestId] = useState(0);
-  const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const [unlockSyncPending, setUnlockSyncPending] = useState(false);
   // The server could not be reached, so who owns the list on this device is unknown.
   const [sessionUnreachable, setSessionUnreachable] = useState(false);
@@ -303,9 +324,9 @@ export default function App() {
   const gameIsOpen = screen === 'game' || (screen === 'collection' && collectionReturnScreen === 'game');
   const gameIsRunning = gameIsOpen && gameEndReason === null;
 
-  const sessionRef = useRef<Omit<GameSessionState, 'table'> | null>(null);
-  sessionRef.current = {
-    owner: coupleSession?.loggedIn ? coupleSession.coupleName ?? null : null,
+  const owner = coupleSession?.loggedIn ? coupleSession.coupleName ?? null : null;
+  const session: SessionCheckpoint = {
+    owner,
     player1,
     player2,
     settings,
@@ -323,7 +344,11 @@ export default function App() {
     playerRewards,
     pendingDifficultyBoosts,
     rewardEvents,
+    startedAt,
   };
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const getCheckpoint = useCallback(() => sessionRef.current, []);
   const gameOpenRef = useRef(false);
   gameOpenRef.current = gameIsOpen;
   const canSaveRef = useRef(false);
@@ -331,7 +356,7 @@ export default function App() {
 
   const persistGame = useCallback(() => {
     window.clearTimeout(saveTimerRef.current);
-    if (!canSaveRef.current || !sessionRef.current || !tableSnapshotRef.current) return;
+    if (!canSaveRef.current || !tableSnapshotRef.current) return;
     saveGameSession({ ...sessionRef.current, table: tableSnapshotRef.current });
   }, []);
   // The table and this component change in the same moment; saving a little later catches both.
@@ -350,12 +375,26 @@ export default function App() {
     gameIsRunning, gameNavigationLocked, scheduleGameSave, player1, player2, settings, currentPlayerIndex,
     currentRound, outfitStates, clothingRemovalEvents, intimacyPercent, luxuryIntimacyPercent, intimacyEvents,
     journeyPhase, sessionPositionCardIds, positionSessionStats, cardResolutionEvents, playerRewards,
-    pendingDifficultyBoosts, rewardEvents,
+    pendingDifficultyBoosts, rewardEvents, startedAt,
   ]);
 
   useEffect(() => {
     writeTabFlag(GAME_TAB_KEY, gameIsRunning);
   }, [gameIsRunning]);
+
+  // Quick hide: one key or tap, and nothing of the game is seen or heard.
+  const canQuickHide = appMode === 'player' && Boolean(playerSession?.loggedIn) && !forceShowLoginScreen;
+  useQuickHideKey(canQuickHide, () => setQuickHidden((hidden) => !hidden));
+  useEffect(() => {
+    soundEngine.setSilenced(quickHidden);
+  }, [quickHidden]);
+  useEffect(() => {
+    if (appMode !== 'player') return;
+    const onVisibility = () => setTabHidden(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [appMode]);
+  useDiscreetTab(quickHidden || (tabHidden && gameIsOpen));
 
   useEffect(() => {
     const saveWhenHidden = () => { if (document.visibilityState === 'hidden') persistGame(); };
@@ -393,12 +432,6 @@ export default function App() {
       window.removeEventListener('keydown', warmUp);
     };
   }, []);
-
-  useEffect(() => {
-    if (!resumeNotice) return;
-    const timeout = window.setTimeout(() => setResumeNotice(null), 4200);
-    return () => window.clearTimeout(timeout);
-  }, [resumeNotice]);
 
   useEffect(() => {
     if (appMode === 'developer') return;
@@ -953,6 +986,8 @@ export default function App() {
     if (unlockedCardIdsRef.current.includes(cardId)) return;
     const next = [...unlockedCardIdsRef.current, cardId];
     unlockedCardIdsRef.current = next;
+    // Written at once as well: the last card of a tab that is being closed counts too.
+    try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(next)); } catch {}
     setUnlockedCardIds(next);
     if (coupleSession?.loggedIn) void uploadUnlockedCards(next);
   };
@@ -1171,6 +1206,7 @@ export default function App() {
     setPlayerRewards(createRewardStates());
     setPendingDifficultyBoosts([]);
     setRewardEvents([]);
+    setStartedAt(Date.now());
     setGameEndReason(null);
     setShowSummary(false);
     forgetGame();
@@ -1178,33 +1214,39 @@ export default function App() {
     setScreen('game');
   };
 
+  /** Everything about a game that lives outside the table, as it was at some moment. */
+  const putSession = (state: SessionCheckpoint) => {
+    setPlayer1(state.player1);
+    setPlayer2(state.player2);
+    setSettings(state.settings);
+    setCurrentPlayerIndex(state.currentPlayerIndex);
+    setCurrentRound(state.currentRound);
+    setOutfitStates(state.outfitStates);
+    setClothingRemovalEvents(state.clothingRemovalEvents);
+    setIntimacyPercent(state.intimacyPercent);
+    setLuxuryIntimacyPercent(state.luxuryIntimacyPercent);
+    setIntimacyEvents(state.intimacyEvents);
+    setJourneyPhase(state.journeyPhase);
+    setSessionPositionCardIds(state.sessionPositionCardIds);
+    setPositionSessionStats(state.positionSessionStats);
+    setCardResolutionEvents(state.cardResolutionEvents);
+    setPlayerRewards(state.playerRewards);
+    setPendingDifficultyBoosts(state.pendingDifficultyBoosts);
+    setRewardEvents(state.rewardEvents);
+    setStartedAt(state.startedAt);
+  };
+
   /** Puts a saved game back on the table exactly where it stopped. */
-  const handleResumeGame = (session: SavedGameSession) => {
-    setPlayer1(session.player1);
-    setPlayer2(session.player2);
-    setSettings(session.settings);
-    setCurrentPlayerIndex(session.currentPlayerIndex);
-    setCurrentRound(session.currentRound);
-    setOutfitStates(session.outfitStates);
-    setClothingRemovalEvents(session.clothingRemovalEvents);
-    setIntimacyPercent(session.intimacyPercent);
-    setLuxuryIntimacyPercent(session.luxuryIntimacyPercent);
-    setIntimacyEvents(session.intimacyEvents);
-    setJourneyPhase(session.journeyPhase);
-    setSessionPositionCardIds(session.sessionPositionCardIds);
-    setPositionSessionStats(session.positionSessionStats);
-    setCardResolutionEvents(session.cardResolutionEvents);
-    setPlayerRewards(session.playerRewards);
-    setPendingDifficultyBoosts(session.pendingDifficultyBoosts);
-    setRewardEvents(session.rewardEvents);
+  const handleResumeGame = (saved: SavedGameSession) => {
+    putSession(saved);
     setGameEndReason(null);
     setShowSummary(false);
+    setShowClosing(false);
     setGameNavigationLocked(false);
-    tableSnapshotRef.current = session.table;
-    setResumeSnapshot(session.table);
+    tableSnapshotRef.current = saved.table;
+    setResumeSnapshot(saved.table);
     setSavedGame(null);
     setGameId((id) => id + 1);
-    setResumeNotice('Đã khôi phục ván đang chơi.');
     setScreen('game');
   };
 
@@ -1267,6 +1309,7 @@ export default function App() {
     setPlayerRewards(createRewardStates());
     setPendingDifficultyBoosts([]);
     setRewardEvents([]);
+    setStartedAt(null);
     setShowSummary(false);
     setGameEndReason(null);
     forgetGame();
@@ -1275,13 +1318,58 @@ export default function App() {
 
   const handleFinishGame = (reason: GameEndReason) => {
     forgetGame();
+    finishedAtRef.current = Date.now();
     setGameEndReason(reason);
+    setJournalSaved(false);
+    // A game that barely started ends without ceremony.
+    if (reason !== 'manual' || player1.completedCount + player2.completedCount >= CLOSING_MIN_CARDS) setShowClosing(true);
+    else setShowSummary(true);
+  };
+
+  /** The couple's journal: only what they chose to keep, only on this device. */
+  const finishedAtRef = useRef(0);
+  const [journal, setJournal] = useState<JournalEntry[]>([]);
+  useEffect(() => {
+    if (appMode === 'player' && playerSession !== null) setJournal(loadJournal(owner));
+  }, [appMode, playerSession, owner]);
+
+  const highlights = useMemo(
+    () => (showClosing ? pickHighlights(allCards, cardResolutionEvents, clothingRemovalEvents) : []),
+    [showClosing, allCards, cardResolutionEvents, clothingRemovalEvents],
+  );
+
+  const handleCloseRitual = (result: ClosingResult | null) => {
+    setShowClosing(false);
     setShowSummary(true);
+    if (!result || gameEndReason === null) return;
+    const finishedAt = finishedAtRef.current || Date.now();
+    const saved = addJournalEntry({
+      id: `game-${finishedAt}`,
+      owner,
+      finishedAt,
+      minutes: getGameMinutes(startedAt, finishedAt),
+      endReason: gameEndReason,
+      players: [
+        { name: player1.name, avatar: player1.avatar },
+        { name: player2.name, avatar: player2.avatar },
+      ],
+      intimacyPercent,
+      luxuryPercent: luxuryIntimacyPercent,
+      cardsCompleted: player1.completedCount + player2.completedCount,
+      garmentsRemoved: clothingRemovalEvents.filter((event) => event.action === 'removed').length,
+      positionsCompleted: positionSessionStats.completed,
+      moments: result.moments,
+      notes: result.notes,
+    });
+    setJournal(loadJournal(owner));
+    setJournalSaved(saved);
+    if (!saved) setStorageError('Chưa lưu được nhật ký: trình duyệt không cho lưu trên máy này.');
   };
 
   const handleReturnHome = () => {
     forgetGame();
     setShowSummary(false);
+    setShowClosing(false);
     setGameEndReason(null);
     setScreen('intro');
   };
@@ -1327,7 +1415,7 @@ export default function App() {
 
   // One extra history entry catches the Back button (and the phone's back
   // gesture): it closes what is open or asks first, instead of leaving the site.
-  const overlayOpen = showRules || showAccountModal || (showSummary && gameEndReason === null);
+  const overlayOpen = showRules || showAccountModal || showJournal || (showSummary && gameEndReason === null);
   const guardBack = appMode === 'player' && Boolean(playerSession?.loggedIn) && (screen !== 'intro' || overlayOpen);
   const guardBackRef = useRef(false);
   guardBackRef.current = guardBack;
@@ -1346,6 +1434,8 @@ export default function App() {
   const handleBackRef = useRef<() => void>(() => {});
   handleBackRef.current = () => {
     if (showRules) setShowRules(false);
+    else if (showJournal) setShowJournal(false);
+    else if (showClosing) setClosingBackId((id) => id + 1);
     else if (showAccountModal) setShowAccountModal(false);
     else if (showSummary && gameEndReason === null) setShowSummary(false);
     else if (screen === 'collection') setScreen(collectionReturnScreen);
@@ -1458,6 +1548,8 @@ export default function App() {
             savedGame={resumableGame}
             onResume={() => { if (resumableGame) handleResumeGame(resumableGame); }}
             onDiscardSavedGame={forgetGame}
+            journalCount={journal.length}
+            onOpenJournal={() => setShowJournal(true)}
           />
           </div>
         )}
@@ -1521,7 +1613,12 @@ export default function App() {
             coupleName={coupleSession?.coupleName}
             onOpenAccountModal={() => setShowAccountModal(true)}
             onFinishGame={handleFinishGame}
-            isSuspended={screen !== 'game' || showRules || showSummary || showAccountModal}
+            isSuspended={screen !== 'game' || showRules || showSummary || showClosing || showAccountModal}
+            concealed={quickHidden || tabHidden}
+            onQuickHide={() => setQuickHidden(true)}
+            guideRequestId={guideRequestId}
+            onCheckpoint={getCheckpoint}
+            onRestoreCheckpoint={putSession}
             onNavigationLockChange={setGameNavigationLocked}
             onUpdatePlayers={(p1, p2) => {
               setPlayer1(p1);
@@ -1594,6 +1691,15 @@ export default function App() {
         )}
       </main>
 
+      {showClosing && (
+        <ClosingRitual
+          players={[player1, player2]}
+          highlights={highlights}
+          backRequestId={closingBackId}
+          onFinish={handleCloseRitual}
+        />
+      )}
+
       {/* Summary Stats Modal */}
       {showSummary && (
         <SummaryModal
@@ -1618,11 +1724,34 @@ export default function App() {
           onHome={handleReturnHome}
           terminal={gameEndReason !== null}
           endReason={gameEndReason}
+          journalSaved={gameEndReason !== null && journalSaved}
         />
       )}
 
       <AnimatePresence>
-        {showRules && <RulesModal inGame={screen === 'game'} onClose={() => setShowRules(false)} />}
+        {showRules && (
+          <RulesModal
+            inGame={screen === 'game'}
+            onClose={() => setShowRules(false)}
+            onShowGuide={screen === 'game' ? () => {
+              setShowRules(false);
+              setGuideRequestId((id) => id + 1);
+            } : undefined}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showJournal && (
+          <JournalModal
+            entries={journal}
+            onDelete={(id) => {
+              deleteJournalEntry(id);
+              setJournal(loadJournal(owner));
+            }}
+            onClose={() => setShowJournal(false)}
+          />
+        )}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -1644,20 +1773,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {resumeNotice && (
-        <div role="status" className="resume-notice pointer-events-none fixed inset-x-0 top-5 z-[60] flex justify-center px-4">
-          <span className="rounded-full border border-emerald-400/35 bg-emerald-950/95 px-4 py-2.5 text-sm font-semibold text-emerald-100 shadow-[0_12px_40px_rgba(0,0,0,.45)]">
-            {resumeNotice}
-          </span>
-        </div>
-      )}
-
       {storageError && (
         <div role="alert" className="fixed bottom-4 left-1/2 z-[90] flex w-[min(92vw,34rem)] -translate-x-1/2 items-center justify-between gap-3 rounded-2xl border border-rose-300/35 bg-[#1a0b11]/95 px-4 py-3 text-xs text-rose-100 shadow-2xl">
           <span>{storageError}</span>
           <button type="button" onClick={() => setStorageError(null)} className="min-h-10 shrink-0 rounded-full border border-white/15 px-3 font-semibold">Đóng</button>
         </div>
       )}
+
+      {quickHidden && <QuickHide onReturn={() => setQuickHidden(false)} />}
     </div>
   );
 }

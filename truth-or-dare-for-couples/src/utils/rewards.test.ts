@@ -2,11 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DIFFICULTY_BOOST_STAR_COST,
+  POSITION_FAMILY_STAR_COST,
+  POSITION_PAIR_STAR_COST,
+  POSITION_REROLL_STAR_COST,
   REROLL_STAR_COST,
   awardStars,
   createRewardStates,
+  getSharedStarBalance,
+  giftStars,
   refundPendingDifficultyBoost,
   spendReward,
+  spendSharedStars,
 } from './rewards';
 
 test('stars are awarded only to the performer and accumulate independently', () => {
@@ -40,4 +46,22 @@ test('an unused difficulty boost can be refunded without inflating usage', () =>
   });
   assert.equal(refunded[0].starBalance, 10);
   assert.equal(refunded[0].difficultyBoostsUsed, 0);
+});
+
+test('the Position options cost more the more they decide, and the couple pays together', () => {
+  assert.deepEqual([POSITION_REROLL_STAR_COST, POSITION_PAIR_STAR_COST, POSITION_FAMILY_STAR_COST], [8, 12, 15]);
+  const rewards = createRewardStates();
+  rewards[0].starBalance = 9;
+  rewards[1].starBalance = 5;
+  const pair = spendSharedStars(rewards, 1, POSITION_PAIR_STAR_COST);
+  assert.deepEqual(pair?.paid, [7, 5]);
+  assert.equal(getSharedStarBalance(pair!.rewards), 2);
+  assert.equal(spendSharedStars(rewards, 0, POSITION_FAMILY_STAR_COST), null);
+});
+
+test('a gift of stars reaches both players and counts as earned', () => {
+  const gifted = giftStars(awardStars(createRewardStates(), 0, 3), 4);
+  assert.deepEqual(gifted.map((reward) => reward.starBalance), [7, 4]);
+  assert.deepEqual(gifted.map((reward) => reward.totalStarsEarned), [7, 4]);
+  assert.deepEqual(giftStars(gifted, -2).map((reward) => reward.starBalance), [7, 4]);
 });

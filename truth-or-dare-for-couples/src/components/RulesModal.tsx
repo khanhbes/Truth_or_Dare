@@ -4,16 +4,21 @@ import {
   Check,
   ChevronRight,
   CircleStop,
+  EyeOff,
+  Feather,
   Flame,
   HandHeart,
   Heart,
+  HeartHandshake,
   Layers,
   MessageCircle,
   Pause,
   RefreshCw,
+  Repeat2,
   Shirt,
   Sparkles,
   Star,
+  Undo2,
   X,
   Zap,
   type LucideIcon,
@@ -25,6 +30,8 @@ interface RulesModalProps {
   onClose: () => void;
   /** Opened from the table: the button continues the game instead of starting one. */
   inGame?: boolean;
+  /** Shows the three steps on the table once more. */
+  onShowGuide?: () => void;
 }
 
 type TabId = 'overview' | 'levels' | 'progression' | 'wardrobe' | 'rewards' | 'consent';
@@ -131,8 +138,10 @@ const OverviewTab: React.FC = () => (
           'Thiết lập: nhập tên, chọn cấp độ, trang phục và xác nhận 18+.',
           'Rút bài: game chọn ngẫu nhiên, hoặc tự chọn Sự thật hay Thử thách.',
           'Hoàn thành hoặc bỏ qua. Từ 20% Tim Hồng, bỏ qua có thể kèm lựa chọn cởi 1 món, nếu hai bạn bật luật này.',
+          'Ở 25%, 50% và 75% Tim Hồng có một lượt sự kiện, chơi hay bỏ qua đều được.',
           'Tim Hồng đầy 100% và cả hai đã cởi hết qua các lá bài thì Bộ Tư thế mở.',
           'Chọn 1 trong 3 lá Have Sex úp để khép ván, hoặc dừng bất cứ lúc nào. Một ván dài khoảng 70 phút.',
+          'Cuối ván: nghỉ và ôm nhau, chọn khoảnh khắc thích nhất, nhắn cho nhau một câu. Muốn giữ thì lưu vào nhật ký trên máy.',
         ].map((text, index) => (
           <li key={text} className="flex items-start gap-3">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-rose-500/15 text-xs font-bold text-rose-200">{index + 1}</span>
@@ -149,7 +158,9 @@ const OverviewTab: React.FC = () => (
             ['Space', 'rút, mở, hoàn thành'],
             ['S', 'bỏ qua'],
             ['R', 'đổi lá khác'],
+            ['Z', 'hoàn tác lượt vừa rồi'],
             ['P', 'tạm dừng'],
+            ['H', 'ẩn nhanh, bấm lại để mở'],
           ].map(([key, text]) => (
             <div key={key} className="flex items-center gap-3">
               <dt><kbd className="inline-grid min-w-10 place-items-center rounded-lg border border-white/20 bg-white/[0.06] px-2 py-1 text-xs font-bold text-white">{key}</kbd></dt>
@@ -269,6 +280,16 @@ const ProgressionTab: React.FC = () => (
       </p>
     </SectionCard>
 
+    <SectionCard title="Lượt sự kiện ở 25%, 50% và 75%" description="Mỗi ván mỗi loại một lần, thứ tự đổi theo ván. Bỏ qua không bị phạt.">
+      <Flow
+        steps={[
+          { icon: HeartHandshake, title: 'Đoán ý nhau', text: 'cùng bí mật chọn, mỗi câu trùng +2★ mỗi người', tone: 'bg-rose-500/15 text-rose-200' },
+          { icon: Repeat2, title: 'Đổi vai', text: 'người kia xem hai lá và chọn lá bạn làm', tone: 'bg-white/10 text-neutral-100' },
+          { icon: Sparkles, title: 'Nhân đôi', text: 'lá hoàn thành kế tiếp cho gấp đôi % Tim Hồng', tone: 'bg-amber-400/15 text-amber-200' },
+        ]}
+      />
+    </SectionCard>
+
     <SectionCard title="Mở Bộ Tư thế" description="Đủ cả ba điều kiện thì Bộ Tư thế mới mở.">
       <Flow
         steps={[
@@ -288,6 +309,9 @@ const ProgressionTab: React.FC = () => (
           </li>
         ))}
       </ul>
+      <p className="mt-3 rounded-xl bg-[#e2c275]/[0.08] px-3 py-2 text-sm text-[#fff4d6]">
+        Lá Tư thế nào cũng có giờ gợi ý, thường 90–120 giây. Bấm đếm nếu muốn, thêm 15 hoặc 30 giây tùy ý, không đếm cũng được.
+      </p>
       <div className="mt-3">
         <Note title="Lá cuối: chọn 1 trong 3 lá Have Sex úp" tone="violet">
           Từ 80%, mỗi lượt có 5% cơ hội mở màn chọn lá cuối; đầy 100% thì chắc chắn mở. Ưu tiên lá hai bạn chưa mở.
@@ -367,8 +391,24 @@ const RewardsTab: React.FC = () => (
         Lượt rút kế tiếp của người kia khó hơn một bậc sao. Đặt trước khi bạn rút bài.
       </Note>
     </div>
+    <Note title="Lá nhẹ hơn · miễn phí" tone="emerald">
+      Mỗi người một lần trong ván: đổi lá đang mở sang một lá ít sao hơn và không kèm cởi đồ. Không tốn sao, không tính là bỏ qua.
+    </Note>
+    <SectionCard title="Tiêu sao ở Bộ Tư thế" description="Hai bạn dùng ví chung: trừ sao của người đang tới lượt trước, thiếu thì trừ của người kia.">
+      <ul className="space-y-1.5">
+        {[
+          ['Đổi lá · 8★', 'Đổi lá đang mở sang lá khác, mỗi lá một lần.'],
+          ['Rút 2 chọn 1 · 12★', 'Mở hai lá cùng lúc rồi giữ lá hai bạn thích hơn.'],
+          ['Chọn nhóm · 15★', 'Lá kế tiếp thuộc nhóm tư thế hai bạn chọn.'],
+        ].map(([name, text]) => (
+          <li key={name} className="rounded-xl bg-black/20 px-3 py-2 text-sm">
+            <span className="font-semibold text-[#f7e7b0]">{name}.</span> <span className="text-neutral-200">{text}</span>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
     <Note title="Lật lá Have Sex · 10★ (2 lá) hoặc 20★ (cả 3)" tone="violet">
-      Ở màn chọn lá cuối, hai bạn dùng ví chung: trừ sao của người đang tới lượt trước, thiếu thì trừ của người kia. Đã lật 2 lá thì chỉ cần thêm 10★ để lật lá còn lại.
+      Ở màn chọn lá cuối cũng dùng ví chung. Đã lật 2 lá thì chỉ cần thêm 10★ để lật lá còn lại.
     </Note>
   </div>
 );
@@ -379,8 +419,17 @@ const ConsentTab: React.FC = () => (
       <div className="grid gap-2 sm:grid-cols-2">
         <Panel icon={Pause} title="Bỏ qua hoặc tạm dừng" text="Không muốn làm thì bỏ qua. Nút Tạm dừng dừng đồng hồ và cho bỏ lá đang mở, không phạt." tone="border-sky-300/30 bg-sky-500/[0.07] text-sky-200" />
         <Panel icon={CircleStop} title="Dừng" text="Kết thúc ván ngay khi một trong hai người muốn." tone="border-rose-400/35 bg-rose-500/[0.08] text-rose-200" />
+        <Panel icon={Feather} title="Lá nhẹ hơn" text="Mỗi người một lần trong ván, đổi miễn phí sang lá ít sao hơn." tone="border-emerald-300/30 bg-emerald-500/[0.07] text-emerald-200" />
+        <Panel icon={Undo2} title="Hoàn tác" text="Bấm nhầm Hoàn thành hay Bỏ qua thì có 5 giây để lấy lại lượt." tone="border-amber-300/30 bg-amber-500/[0.07] text-amber-200" />
       </div>
     </SectionCard>
+
+    <Note title="Ẩn nhanh" tone="emerald">
+      <span className="flex items-start gap-2">
+        <EyeOff className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" aria-hidden="true" />
+        <span>Một chạm vào nút hình con mắt (hoặc phím H) là màn hình thành trang ghi chú, tắt tiếng, đổi tên tab. Rời tab giữa ván thì lá bài tự úp.</span>
+      </span>
+    </Note>
 
     <SectionCard title="Bốn điều hai bạn giữ cho nhau">
       <ul className="space-y-2">
@@ -398,7 +447,7 @@ const ConsentTab: React.FC = () => (
       </ul>
     </SectionCard>
 
-    <SectionCard title="Ba cách kết thúc ván">
+    <SectionCard title="Ba cách kết thúc ván" description="Cách nào cũng có vài phút nghỉ và ôm nhau trước phần tổng kết, bỏ qua được.">
       <ul className="space-y-1.5 text-sm text-neutral-200">
         <li className="flex items-center gap-3 rounded-xl bg-black/20 px-3 py-2"><Sparkles className="h-4 w-4 shrink-0 text-violet-200" aria-hidden="true" />Chọn lá cuối trong 3 lá Have Sex úp.</li>
         <li className="flex items-center gap-3 rounded-xl bg-black/20 px-3 py-2"><Heart className="h-4 w-4 shrink-0 text-rose-200" aria-hidden="true" />Tim Hồng đầy và hai bạn chọn dừng lại ở đó.</li>
@@ -414,7 +463,7 @@ const ConsentTab: React.FC = () => (
 
 /* ─────────────── Dialog ─────────────── */
 
-export const RulesModal: React.FC<RulesModalProps> = ({ onClose, inGame = false }) => {
+export const RulesModal: React.FC<RulesModalProps> = ({ onClose, inGame = false, onShowGuide }) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
@@ -505,11 +554,21 @@ export const RulesModal: React.FC<RulesModalProps> = ({ onClose, inGame = false 
           </AnimatePresence>
         </div>
 
-        <footer className="shrink-0 border-t border-white/10 px-5 py-3 sm:px-7">
+        <footer className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-white/10 px-5 py-3 sm:flex-nowrap sm:px-7">
+          {onShowGuide && (
+            <button
+              type="button"
+              data-action="show-guide"
+              onClick={onShowGuide}
+              className="min-h-12 w-full rounded-full border border-white/20 bg-white/[0.05] px-5 text-sm font-semibold text-neutral-100 transition-colors hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 sm:max-w-60"
+            >
+              Xem lại hướng dẫn trên bàn
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
-            className="mx-auto flex min-h-12 w-full max-w-sm items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 text-sm font-bold text-neutral-950 shadow-[0_0_24px_rgba(212,175,55,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+            className="flex min-h-12 w-full max-w-sm items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 text-sm font-bold text-neutral-950 shadow-[0_0_24px_rgba(212,175,55,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
           >
             <Check className="h-4 w-4" aria-hidden="true" />
             <span>{inGame ? 'Đã hiểu, chơi tiếp' : 'Đã hiểu'}</span>

@@ -115,9 +115,12 @@ const READ_STATE = `(() => {
   const dialog = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter(visible).pop() || null;
   const root = [...document.querySelectorAll('[data-game-state]')].filter(visible)[0] || null;
   const slot = root && root.querySelector('[data-card-slot]');
-  const main = root && [...root.querySelectorAll('[data-main-action], [data-action="agree"]')].filter(visible)[0] || null;
+  const main = root && [...root.querySelectorAll('[data-main-action], [data-action="agree"], [data-action="pair-choose"]')].filter(visible)[0] || null;
   let state = 'other';
   if (dialog && dialog.querySelector('#summary-title')) state = 'summary';
+  else if (dialog && dialog.querySelector('[data-action="closing-skip"]')) state = 'closing';
+  else if (dialog && dialog.classList.contains('quick-hide')) state = 'hidden-page';
+  else if (dialog && dialog.classList.contains('table-guide__panel')) state = 'guide';
   else if (dialog) state = 'dialog';
   else if (root) state = root.dataset.gameState;
   if (state === 'answer' && main && main.dataset.action === 'start-timer') state = 'answer-timer';
@@ -163,6 +166,12 @@ const ACT = (roll, skipRate) => `(() => {
   const press = (b, name) => { b.click(); return name + ' -> ' + label(b).slice(0, 50); };
   const by = (...texts) => buttons.find((b) => texts.some((t) => label(b).startsWith(t)));
   const action = (name) => buttons.find((b) => b.dataset.action === name);
+  // Independent chances from the one roll.
+  const chance = (salt) => ((${roll} + 0.137) * salt) % 1;
+  const oneOf = (name) => {
+    const found = buttons.filter((b) => b.dataset.action === name);
+    return found.length ? found[Math.floor(chance(613) * found.length)] : null;
+  };
   const groups = new Map();
   for (const choice of [...scope.querySelectorAll('.garment-choice')].filter(visible)) {
     const parent = choice.parentElement;
@@ -177,8 +186,16 @@ const ACT = (roll, skipRate) => `(() => {
     if (free.length) { const chosen = free[Math.floor(${roll} * free.length)]; chosen.click(); return 'garment -> ' + label(chosen).slice(0, 40); }
   }
   if (dialog) {
+    const guide = (chance(71) < 0.5 ? null : action('guide-skip')) || action('guide-next');
+    if (guide) return press(guide, 'guide');
+    const back = action('quick-return');
+    if (back) return press(back, 'quick-return');
+    const closing = action('closing-save') || (chance(43) < 0.6 ? oneOf('closing-moment') : null) || action('closing-next');
+    if (closing) return press(closing, 'closing');
+    const family = oneOf('family');
+    if (family) return press(family, 'family');
     const penalty = action('penalty-garment');
-    const free = action('penalty-none');
+    const free = chance(89) < 0.25 && action('penalty-lighter') || action('penalty-none');
     const next = (${roll} * 997) % 1 < 0.5 ? (penalty || free) : (free || penalty);
     const other = by('Tiếp tục', 'Chơi tiếp', 'Đóng');
     if (next || other) return press(next || other, 'dialog');
@@ -188,8 +205,19 @@ const ACT = (roll, skipRate) => `(() => {
   if (down.length) { const card = down[Math.floor(${roll} * down.length)]; card.click(); return 'final-card'; }
   const skip = action('skip');
   if (skip && ${roll} < ${skipRate}) return press(skip, 'skip');
-  for (const name of ['reveal', 'start-timer', 'complete', 'choose-dare', 'choose-truth', 'agree', 'draw']) {
+  // Now and then: take the last turn back, swap a card, hide the page, refuse an event…
+  for (const [name, rate, salt] of [
+    ['undo', 0.08, 31], ['hide', 0.02, 53], ['lighter', 0.06, 97], ['reroll', 0.08, 101],
+    ['pair', 0.3, 211], ['family-open', 0.15, 307], ['event-skip', 0.15, 401], ['extend-15', 0.1, 503],
+  ]) {
     const button = action(name);
+    if (button && chance(salt) < rate) return press(button, name);
+  }
+  for (const name of [
+    'pair-open', 'pair-choose', 'event-start', 'match-ready', 'match-answer', 'event-done',
+    'reveal', 'start-timer', 'complete', 'choose-dare', 'choose-truth', 'agree', 'draw',
+  ]) {
+    const button = oneOf(name);
     if (button) return press(button, name);
   }
   return 'NONE ' + JSON.stringify(buttons.map(label).slice(0, 16));
@@ -248,7 +276,7 @@ const runGame = async (browser, width, height, gameNumber) => {
   }
 
   const label = `${width}x${height}#${gameNumber}`;
-  const report = { label, draws: 0, skips: 0, finished: false, states: {}, offscreen: [], covered: [], overflowX: 0, overflowY: 0, cardTop: [], errors, log: [] };
+  const report = { label, draws: 0, skips: 0, finished: false, states: {}, extras: {}, offscreen: [], covered: [], overflowX: 0, overflowY: 0, cardTop: [], errors, log: [] };
   const shot = async (name) => {
     if (!SHOTS) return;
     const { result } = await send('Page.captureScreenshot', { format: 'png' });
@@ -338,6 +366,10 @@ const runGame = async (browser, width, height, gameNumber) => {
       if (process.env.SMOKE_VERBOSE) report.log.push(`${settled.state} ${settled.percent ?? ''}% ${result}`);
       if (result.startsWith('draw')) report.draws += 1;
       if (result.startsWith('skip')) report.skips += 1;
+      const name = result.split(' ')[0];
+      if (['undo', 'hide', 'lighter', 'reroll', 'pair', 'family', 'event-start', 'event-skip', 'extend-15', 'closing'].includes(name)) {
+        report.extras[name] = (report.extras[name] ?? 0) + 1;
+      }
       stuck = 0;
       await sleep(result.startsWith('draw') ? 900 : 250);
     }
@@ -356,7 +388,7 @@ await Promise.all(Array.from({ length: Math.min(JOBS, queue.length) }, async () 
       reports.push(await playGame(width, height, game));
     } catch (error) {
       reports.push({
-        label: `${width}x${height}#${game}`, draws: 0, skips: 0, finished: false, states: {},
+        label: `${width}x${height}#${game}`, draws: 0, skips: 0, finished: false, states: {}, extras: {},
         offscreen: [], covered: [], overflowX: 0, overflowY: 0, cardTop: [], errors: [`driver: ${error.message}`], log: [],
       });
     }
@@ -380,6 +412,7 @@ for (const report of reports) {
   for (const [state, info] of Object.entries(report.states)) {
     console.log(`   ${state.padEnd(22)} x${String(info.count).padEnd(3)} card ${info.cardSize ?? '-'} top ${info.cardTop.join('–') || '-'} · main ends ${info.mainBottom || '-'} · panels ${info.panelTop ?? '-'}`);
   }
+  if (Object.keys(report.extras).length) console.log(`   extras ${JSON.stringify(report.extras)}`);
   if (!mustFit && offscreen.length) console.log(`   (not required to fit) ${offscreen.length} button positions below the window`);
   for (const line of [...report.log, ...problems.map((problem) => `PROBLEM ${problem}`)]) console.log(`   ${line}`);
 }

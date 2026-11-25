@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Flag, Heart, LockOpen, TriangleAlert } from 'lucide-react';
+import { AnimatePresence, useReducedMotion } from 'motion/react';
+import { Flag } from 'lucide-react';
 import {
   CardItem,
   CardResolutionEvent,
@@ -22,7 +22,7 @@ import {
 } from '../types';
 import { soundEngine } from '../utils/audio';
 import { fireFinalConfetti, fireHeartConfetti, fireMilestoneConfetti } from '../utils/confetti';
-import { DURATION, EASE_OUT, TABLE_TIMING } from '../utils/motionTokens';
+import { TABLE_TIMING } from '../utils/motionTokens';
 import { preloadCardArt } from './CardIcons';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PenaltyPrompt } from './PenaltyPrompt';
@@ -31,8 +31,11 @@ import { GarmentSwapDialog } from './GarmentSwapDialog';
 import { DualGarmentRemovalDialog } from './DualGarmentRemovalDialog';
 import { CardSpark } from './game/CardSpark';
 import { ChooseType } from './game/ChooseType';
+import { EventTurn } from './game/EventTurn';
+import { FamilyPicker } from './game/FamilyPicker';
 import { FinalChoice } from './game/FinalChoice';
 import { GameHeader } from './game/GameHeader';
+import { PairChoice } from './game/PairChoice';
 import { PauseDialog } from './game/PauseDialog';
 import { PlayerPanel } from './game/PlayerPanel';
 import { PositionConsent } from './game/PositionConsent';
@@ -40,8 +43,13 @@ import { PositionEmpty } from './game/PositionEmpty';
 import { TableActions } from './game/TableActions';
 import { TableCard, type CardExit } from './game/TableCard';
 import { TableDeck } from './game/TableDeck';
+import { TableGuide, hasSeenTableGuide } from './game/TableGuide';
+import { TableToast, type TableNotice } from './game/TableToast';
 import { TurnStrip } from './game/TurnStrip';
+import { useActionGuard } from './game/useActionGuard';
 import { useTableShortcuts } from './game/useTableShortcuts';
+import { useUndoWindow } from './game/useUndoWindow';
+import { useWakeLock } from './game/useWakeLock';
 import { isDialogOpen } from './useDialogFocus';
 import './game/game-table.css';
 import { getRemovalTargetIndices } from '../utils/cardSelection';
@@ -55,8 +63,18 @@ import {
   removeGarmentsFromBoth,
   swapGarments,
 } from '../utils/wardrobe';
-import { requiresTimerStartBeforeCompletion, resolveCardTimerSeconds } from '../utils/cardTimer';
-import type { FinalChoiceSnapshot, TableSnapshot } from '../utils/gameSession';
+import type { MatchQuestion } from '../data/eventQuestions';
+import { extendTimer, requiresTimerStartBeforeCompletion, resolveCardTimerSeconds } from '../utils/cardTimer';
+import {
+  DOUBLE_MULTIPLIER,
+  MATCH_STAR_REWARD,
+  createGameEvents,
+  finishEvent,
+  getDueEvent,
+  pickMatchQuestions,
+  type GameEventsState,
+} from '../utils/gameEvents';
+import type { FinalChoiceSnapshot, PairSnapshot, SessionCheckpoint, TableSnapshot } from '../utils/gameSession';
 import {
   advanceClothingTurn,
   clothingEffectFamily,
@@ -83,9 +101,13 @@ import {
   DIFFICULTY_BOOST_STAR_COST,
   FINAL_FLIP_THREE_STAR_COST,
   FINAL_FLIP_TWO_STAR_COST,
+  POSITION_FAMILY_STAR_COST,
+  POSITION_PAIR_STAR_COST,
+  POSITION_REROLL_STAR_COST,
   REROLL_STAR_COST,
   awardStars,
   getSharedStarBalance,
+  giftStars,
   refundPendingDifficultyBoost,
   spendReward,
   spendSharedStars,
@@ -100,11 +122,16 @@ import {
   getStandardCardPerformerIndex,
   getJourneyDrawAnalysis,
   getLuxuryDrawProbabilities,
+  getPositionFamilyOptions,
   selectJourneyCard,
+  selectJourneyPair,
+  selectLighterJourneyCard,
   POSITION_DIFFICULTY_STARS,
   selectLuxuryPositionCard,
+  selectPositionPair,
   type JourneyDrawProbabilities,
   type LuxuryDrawProbabilities,
+  type PositionFamilyOption,
 } from '../utils/progression';
 
 interface GameTableProps {
@@ -156,6 +183,14 @@ interface GameTableProps {
   onSnapshot?: (snapshot: TableSnapshot) => void;
   /** Changes when the Back button asks to leave the game. */
   endRequestId?: number;
+  /** The game outside the table as it is now, and the way back to it. */
+  onCheckpoint: () => SessionCheckpoint;
+  onRestoreCheckpoint: (checkpoint: SessionCheckpoint) => void;
+  /** Quick hide, or the tab is in the background: nothing stays readable. */
+  concealed?: boolean;
+  onQuickHide: () => void;
+  /** Changes when the rules ask to show the table guide again. */
+  guideRequestId?: number;
 }
 
 /** Intimacy level below which skipping never asks for a garment as penalty. */
@@ -169,6 +204,34 @@ interface RemovalScene {
   targets: PlayerIndex[];
   /** What the figures wear during the scene; null while only the light is on. */
   outfits: Outfits | null;
+}
+
+type ProbabilitySnapshot =
+  | { deck: 'standard'; probabilities: JourneyDrawProbabilities }
+  | { deck: 'position'; probabilities: LuxuryDrawProbabilities };
+
+/** A standard card that is about to be played. */
+interface DrawnCard {
+  card: CardItem;
+  used: string[];
+  probabilities: JourneyDrawProbabilities;
+}
+
+/** Everything a finished turn changes, as it was before. */
+interface TurnCheckpoint {
+  session: SessionCheckpoint;
+  card: CardItem;
+  wasRerolled: boolean;
+  trigger: TableSnapshot['clothingTrigger'];
+  usedCardIds: string[];
+  clothingJourney: TableSnapshot['clothingJourney'];
+  clothingScheduler: TableSnapshot['clothingScheduler'];
+  waitedClothingTriggerId: string | null;
+  cardDirector: TableSnapshot['cardDirector'];
+  events: GameEventsState;
+  lighterUsed: [boolean, boolean];
+  probabilities: ProbabilitySnapshot | null;
+  timer: { seconds: number | null; total: number; started: boolean };
 }
 
 /** One draw: shuffle, the card lifts off the deck, the card turns over. */
@@ -231,17 +294,26 @@ export const GameTable: React.FC<GameTableProps> = ({
   initialSnapshot = null,
   onSnapshot,
   endRequestId = 0,
+  onCheckpoint,
+  onRestoreCheckpoint,
+  concealed = false,
+  onQuickHide,
+  guideRequestId = 0,
 }) => {
   const [isMuted, setIsMuted] = useState(soundEngine.getMuted());
+  const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
+  const [hapticsOn, setHapticsOn] = useState(soundEngine.getHapticsOn());
+  const [canVibrate] = useState(() => soundEngine.canVibrate() && window.matchMedia('(pointer: coarse)').matches);
   const reduceMotion = Boolean(useReducedMotion());
   const figureMood = journeyPhase === 'standard' ? Math.min(1, intimacyPercent / 100) : 1;
   const previousPhaseRef = useRef(journeyPhase);
   useEffect(() => {
     const previous = previousPhaseRef.current;
     previousPhaseRef.current = journeyPhase;
-    if (reduceMotion || previous === journeyPhase || journeyPhase !== 'position_consent') return;
+    if (previous === journeyPhase || journeyPhase !== 'position_consent') return;
+    soundEngine.play('deck');
     soundEngine.haptic([30, 60, 30, 60, 80]);
-    fireHeartConfetti();
+    if (!reduceMotion) fireHeartConfetti();
   }, [journeyPhase, reduceMotion]);
   const [showPenaltyPrompt, setShowPenaltyPrompt] = useState(false);
   const [usedCardIds, setUsedCardIds] = useState<string[]>(initialSnapshot?.usedCardIds ?? []);
@@ -259,7 +331,10 @@ export const GameTable: React.FC<GameTableProps> = ({
   );
   const [drawError, setDrawError] = useState<string | null>(null);
   const [liveMessage, setLiveMessage] = useState<string>('');
-  const [gainNotice, setGainNotice] = useState<{ text: string; unlocked: boolean } | null>(null);
+  const [notice, setNotice] = useState<TableNotice | null>(
+    initialSnapshot ? { tone: 'restored', text: 'Đã khôi phục ván đang chơi.' } : null,
+  );
+  const warn = (text: string) => setNotice({ tone: 'warning', text });
   const [removalRequest, setRemovalRequest] = useState<{
     source: 'card' | 'penalty' | 'preparation';
     targetIndex: PlayerIndex;
@@ -267,6 +342,13 @@ export const GameTable: React.FC<GameTableProps> = ({
   const [showSwapDialog, setShowSwapDialog] = useState(false);
   const [showDualRemovalDialog, setShowDualRemovalDialog] = useState(false);
   const [finalChoice, setFinalChoice] = useState<FinalChoiceState | null>(initialSnapshot?.finalChoice ?? null);
+  const [gameEvents, setGameEvents] = useState<GameEventsState>(() => initialSnapshot?.events ?? createGameEvents(intimacyPercent));
+  /** Questions of the "Đoán ý" turn that is being played. */
+  const [matchQuestions, setMatchQuestions] = useState<MatchQuestion[] | null>(null);
+  const [lighterUsed, setLighterUsed] = useState<[boolean, boolean]>(initialSnapshot?.lighterUsed ?? [false, false]);
+  const [pair, setPair] = useState<PairSnapshot | null>(initialSnapshot?.pair ?? null);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [familyOptions, setFamilyOptions] = useState<PositionFamilyOption[] | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showPause, setShowPause] = useState(false);
   const [scene, setScene] = useState<RemovalScene | null>(null);
@@ -282,24 +364,26 @@ export const GameTable: React.FC<GameTableProps> = ({
   const [isRevealed, setIsRevealed] = useState<boolean>(!settings.privacyDefault);
   const [cardFlipped, setCardFlipped] = useState<boolean>(Boolean(initialSnapshot?.activeCard));
 
-  // Timer state for Dares
+  // Countdown of the open card
   const [timerSeconds, setTimerSeconds] = useState<number | null>(() =>
     initialSnapshot?.activeCard ? resolveCardTimerSeconds(initialSnapshot.activeCard) : null,
   );
+  /** A full ring: the card's time with everything that was added. */
+  const [timerTotal, setTimerTotal] = useState(() => timerSeconds ?? 0);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [hasTimerStarted, setHasTimerStarted] = useState(false);
   const [activeCardWasRerolled, setActiveCardWasRerolled] = useState(initialSnapshot?.activeCardWasRerolled ?? false);
-  const [drawProbabilitySnapshot, setDrawProbabilitySnapshot] = useState<
-    | { deck: 'standard'; probabilities: JourneyDrawProbabilities }
-    | { deck: 'position'; probabilities: LuxuryDrawProbabilities }
-    | null
-  >(null);
+  const [drawProbabilitySnapshot, setDrawProbabilitySnapshot] = useState<ProbabilitySnapshot | null>(null);
   const didPlayTimerAlarmRef = useRef(false);
   const completionCommittedRef = useRef(false);
   const drawTimeoutsRef = useRef<number[]>([]);
   const drawSequenceRef = useRef<DrawSequence | null>(null);
   const sceneTimeoutsRef = useRef<number[]>([]);
   const wasTimerRunningBeforeSuspendRef = useRef(false);
+  /** The Position card whose opening has already been counted. */
+  const openedPositionIdRef = useRef<string | null>(null);
+  const concealedRef = useRef(concealed);
+  concealedRef.current = concealed;
 
   const currentPlayer = currentPlayerIndex === 0 ? player1 : player2;
   // Keep the unrevealed card out of the content-rendering branch entirely.
@@ -395,7 +479,14 @@ export const GameTable: React.FC<GameTableProps> = ({
     : currentLuxuryProbabilities;
   const displayOutfits = scene?.outfits ?? outfitStates;
   const navigationLocked = drawState === 'shuffling' || drawState === 'drawing' || scene !== null;
-  const isPaused = isSuspended || showEndConfirm || showPause;
+  const isPaused = isSuspended || concealed || showEndConfirm || showPause;
+  useWakeLock(!isPaused);
+
+  // A finished turn can be taken back for a few seconds.
+  const [undoHovered, setUndoHovered] = useState(false);
+  const undoHeld = isPaused || undoHovered;
+  const { pending: undo, open: openUndo, close: closeUndo, take: takeUndo } = useUndoWindow<TurnCheckpoint>(undoHeld);
+  useEffect(() => { if (!undo) setUndoHovered(false); }, [undo]);
 
   useEffect(() => {
     onNavigationLockChange?.(navigationLocked);
@@ -414,10 +505,14 @@ export const GameTable: React.FC<GameTableProps> = ({
       activeCardWasRerolled,
       clothingTrigger: drawState === 'drawn' ? currentTriggerRef.current : null,
       finalChoice,
+      events: gameEvents,
+      lighterUsed,
+      pair,
     });
   }, [
     onSnapshot, navigationLocked, usedCardIds, clothingJourney, dynamicClothingScheduler,
     waitedClothingTriggerId, cardDirectorState, drawState, activeCard, activeCardWasRerolled, finalChoice,
+    gameEvents, lighterUsed, pair,
   ]);
 
   // Illustrations are not stored with a saved game; they return once the catalog has loaded.
@@ -433,6 +528,13 @@ export const GameTable: React.FC<GameTableProps> = ({
       if (!choice) return choice;
       const candidates = choice.candidates.map(withImage);
       return candidates.some((card, index) => card !== choice.candidates[index]) ? { ...choice, candidates } : choice;
+    });
+    setPair((current) => {
+      if (!current) return current;
+      const [first, second] = current.options.map((option) => ({ ...option, card: withImage(option.card) }));
+      return first.card !== current.options[0].card || second.card !== current.options[1].card
+        ? { ...current, options: [first, second] }
+        : current;
     });
   }, [availableCards, initialSnapshot]);
 
@@ -457,6 +559,29 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
   }, [isPaused, isTimerRunning, timerSeconds]);
 
+  // Out of sight: cards go face down and the countdown waits until somebody starts it again.
+  useEffect(() => {
+    if (!concealed) return;
+    wasTimerRunningBeforeSuspendRef.current = false;
+    setIsTimerRunning(false);
+    setIsRevealed(false);
+    setPairOpen(false);
+    closeUndo();
+  }, [concealed, closeUndo]);
+
+  // The score follows the game, and waits with it.
+  useEffect(() => {
+    const standardPhase = journeyPhase === 'standard' || journeyPhase === 'position_consent';
+    soundEngine.setMusicHeat(standardPhase ? intimacyPercent * 0.006 : 0.6 + luxuryIntimacyPercent * 0.004);
+  }, [journeyPhase, intimacyPercent, luxuryIntimacyPercent]);
+  useEffect(() => {
+    soundEngine.setMusicHeld(showPause || concealed);
+  }, [showPause, concealed]);
+  useEffect(() => () => {
+    soundEngine.setMusicHeld(false);
+    soundEngine.setMusicHeat(0);
+  }, []);
+
   // Countdown uses one disposable timeout per second. The alarm is handled by
   // the guarded transition effect below, outside the state updater, so React
   // Strict Mode cannot accidentally schedule it twice.
@@ -465,9 +590,8 @@ export const GameTable: React.FC<GameTableProps> = ({
 
     const currentSeconds = timerSeconds;
     const timeout = window.setTimeout(() => {
-      if (currentSeconds <= 5 && currentSeconds > 1) {
-        soundEngine.playTick();
-      }
+      // Heard with 5, 4, 3, 2 and 1 on the card; the bell takes over at 0.
+      if (currentSeconds <= 6 && currentSeconds > 1) soundEngine.playTick();
       setTimerSeconds((latestSeconds) =>
         latestSeconds === currentSeconds ? Math.max(0, currentSeconds - 1) : latestSeconds,
       );
@@ -572,6 +696,7 @@ export const GameTable: React.FC<GameTableProps> = ({
     setScene({ targets, outfits: null });
     const total = TABLE_TIMING.spotlight + TABLE_TIMING.garmentOff;
     later(() => {
+      soundEngine.playGarment();
       soundEngine.haptic([18, 40, 30]);
       setLiveMessage(announcement);
       setScene({ targets, outfits });
@@ -589,11 +714,22 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
   };
 
+  // A message with "Hoàn tác" stays as long as the turn can be taken back.
   useEffect(() => {
-    if (!gainNotice) return;
-    const timeout = window.setTimeout(() => setGainNotice(null), 3000);
+    if (!notice || undo) return;
+    const timeout = window.setTimeout(
+      () => setNotice(null),
+      notice.tone === 'warning' || notice.tone === 'restored' ? 4200 : 3000,
+    );
     return () => window.clearTimeout(timeout);
-  }, [gainNotice]);
+  }, [notice, undo]);
+  const undoNoticeRef = useRef<TableNotice | null>(null);
+  useEffect(() => {
+    if (undo) undoNoticeRef.current = notice;
+    else setNotice((current) => (current === undoNoticeRef.current ? null : current));
+    // Only when the window opens or closes: the message of that moment belongs to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undo]);
 
   useEffect(() => {
     if (sparkId === 0) return;
@@ -602,8 +738,39 @@ export const GameTable: React.FC<GameTableProps> = ({
   }, [sparkId]);
 
   const handleToggleMute = () => {
-    const muted = soundEngine.toggleMute();
-    setIsMuted(muted);
+    setIsMuted(soundEngine.toggleMute());
+    setIsMusicOn(soundEngine.isMusicOn());
+  };
+
+  const handleToggleMusic = () => {
+    setIsMusicOn(soundEngine.toggleBackgroundMusic());
+    setIsMuted(soundEngine.getMuted());
+  };
+
+  /** Face down by default, and always while the table is out of sight. */
+  const opensFaceUp = () => !settings.privacyDefault && !concealedRef.current;
+
+  /** Gets a card's countdown ready (or clears it); it runs once somebody starts it. */
+  const prepareTimer = (card: CardItem | null) => {
+    const seconds = resolveCardTimerSeconds(card);
+    soundEngine.stopTimerAlarm();
+    didPlayTimerAlarmRef.current = false;
+    wasTimerRunningBeforeSuspendRef.current = false;
+    setTimerSeconds(seconds);
+    setTimerTotal(seconds ?? 0);
+    setHasTimerStarted(false);
+    setIsTimerRunning(false);
+  };
+
+  const handleTimerExtend = (extra: number) => {
+    if (isPaused || !hasTimerStarted || timerSeconds === null) return;
+    const seconds = extendTimer(timerSeconds, extra);
+    soundEngine.stopTimerAlarm();
+    didPlayTimerAlarmRef.current = false;
+    if (timerSeconds === 0) setIsTimerRunning(true);
+    setTimerSeconds(seconds);
+    setTimerTotal((total) => Math.max(total, seconds));
+    setLiveMessage(`Đã thêm ${extra} giây, còn ${seconds} giây.`);
   };
 
   const handleTimerControl = () => {
@@ -623,6 +790,7 @@ export const GameTable: React.FC<GameTableProps> = ({
       soundEngine.stopTimerAlarm();
       didPlayTimerAlarmRef.current = false;
       setTimerSeconds(resetSeconds);
+      setTimerTotal(resetSeconds);
       setIsTimerRunning(true);
       setHasTimerStarted(true);
       setLiveMessage('Đã bắt đầu đếm lại thời gian.');
@@ -634,6 +802,7 @@ export const GameTable: React.FC<GameTableProps> = ({
 
   // Initiate Draw Process
   const handleStartDraw = () => {
+    closeUndo();
     soundEngine.playTick();
     setDrawError(null);
     if (availableDrawTypes.length === 0) {
@@ -650,14 +819,12 @@ export const GameTable: React.FC<GameTableProps> = ({
   const executeDrawCard = (preferredType: CardType | null) => {
     // A due clothing milestone is attached to a Dare when one comes up (never to a Truth); once it
     // has let a draw pass, the next random draw is a Dare.
-    const dueTrigger = dueClothingTrigger;
-    const selectionOptions = journeySelectionOptions;
     const dareFirst = forceClothingDare && !preferredType
-      ? selectJourneyCard({ ...selectionOptions, preferredType: 'dare' })
+      ? selectJourneyCard({ ...journeySelectionOptions, preferredType: 'dare' })
       : null;
     const selection = dareFirst?.card
       ? dareFirst
-      : selectJourneyCard({ ...selectionOptions, preferredType });
+      : selectJourneyCard({ ...journeySelectionOptions, preferredType });
 
     if (!selection.card) {
       setDrawError(selection.errorCode === 'no_progress_gain'
@@ -672,61 +839,79 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
 
-    let randomCard = selection.card;
-    if (dueTrigger && shouldInjectClothingDirective(randomCard)) {
-      currentTriggerRef.current = dueTrigger;
-      randomCard = injectClothingDirective(
-        randomCard,
-        currentPlayerIndex,
-        dueTrigger.targetIndex,
-      );
+    const card = beginStandardTurn({
+      card: selection.card,
+      used: selection.nextUsedCardIds,
+      probabilities: selection.probabilities,
+    });
+    dealStandardCard(card, false);
+  };
+
+  /** Settles everything about a drawn card before it is seen: a due removal, a queued boost, the odds. */
+  const beginStandardTurn = (drawn: DrawnCard): CardItem => {
+    let { card } = drawn;
+    if (dueClothingTrigger && shouldInjectClothingDirective(card)) {
+      currentTriggerRef.current = dueClothingTrigger;
+      card = injectClothingDirective(card, currentPlayerIndex, dueClothingTrigger.targetIndex);
       setWaitedClothingTriggerId(null);
     } else {
       currentTriggerRef.current = null;
-      setWaitedClothingTriggerId(dueTrigger?.itemId ?? null);
+      setWaitedClothingTriggerId(dueClothingTrigger?.itemId ?? null);
     }
-
+    const played = card;
+    closeUndo();
     completionCommittedRef.current = false;
-    setCardDirectorState((current) => recordDirectedCard(current, randomCard));
+    setCardDirectorState((current) => recordDirectedCard(current, played));
     setActiveCardWasRerolled(false);
-    setUsedCardIds(selection.nextUsedCardIds);
-    setDrawProbabilitySnapshot({ deck: 'standard', probabilities: selection.probabilities });
+    setUsedCardIds(drawn.used);
+    setDrawProbabilitySnapshot({ deck: 'standard', probabilities: drawn.probabilities });
     setDrawError(null);
-    setGainNotice(null);
-    setTimerSeconds(null);
-    setHasTimerStarted(false);
-    setIsTimerRunning(false);
+    setNotice(null);
+    prepareTimer(null);
     if (activeDifficultyBoost) {
       onPendingDifficultyBoostsChange(
         pendingDifficultyBoosts.filter((boost) => boost !== activeDifficultyBoost),
       );
       setLiveMessage(`Lượt tăng khó của ${activeDifficultyBoost.ownerPlayerIndex === 0 ? player1.name : player2.name} đã được áp dụng.`);
     }
+    return played;
+  };
 
-    startDrawSequence(
-      randomCard,
-      () => {
-        setActiveCard(randomCard);
-        setDrawState('drawing');
-        setIsRevealed(!settings.privacyDefault);
-        setCardFlipped(false);
-      },
-      () => {
-        setCardFlipped(true);
-        setDrawState('drawn');
-        // A card may override, disable or inherit the configured duration for
-        // its Truth/Action type.
-        soundEngine.stopTimerAlarm();
-        didPlayTimerAlarmRef.current = false;
-        setTimerSeconds(resolveCardTimerSeconds(randomCard));
-        setHasTimerStarted(false);
-        setIsTimerRunning(false);
-      },
-    );
+  /** The drawn card comes off the deck. */
+  const dealStandardCard = (card: CardItem, rerolled: boolean) => startDrawSequence(
+    card,
+    () => {
+      setActiveCard(card);
+      setDrawState('drawing');
+      setIsRevealed(opensFaceUp());
+      setCardFlipped(false);
+    },
+    () => {
+      setCardFlipped(true);
+      setDrawState('drawn');
+      setActiveCardWasRerolled(rerolled);
+      prepareTimer(card);
+    },
+  );
+
+  /** A card chosen from two is already out of the deck: it only lies down on the table. */
+  const layChosenCard = (card: CardItem, faceUp: boolean) => {
+    releaseActionFocus();
+    soundEngine.playCardFlip();
+    soundEngine.haptic(12);
+    setPair(null);
+    setPairOpen(false);
+    setQuickFlip(false);
+    setActiveCard(card);
+    setCardFlipped(true);
+    setDrawState('drawn');
+    setIsRevealed(faceUp && !concealedRef.current);
+    prepareTimer(card);
   };
 
   const handleQueueDifficultyBoost = () => {
     if (journeyPhase !== 'standard' || drawState !== 'idle') return;
+    closeUndo();
     const targetPlayerIndex: PlayerIndex = currentPlayerIndex === 0 ? 1 : 0;
     if (pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === targetPlayerIndex)) {
       setDrawError('Đối phương đã có một lượt tăng khó đang chờ.');
@@ -753,6 +938,7 @@ export const GameTable: React.FC<GameTableProps> = ({
       timestamp: Date.now(),
     });
     setDrawError(null);
+    soundEngine.play('spend');
     setLiveMessage(`${currentPlayer.name} đã dùng ${DIFFICULTY_BOOST_STAR_COST} sao. Lượt rút kế tiếp của ${targetPlayerIndex === 0 ? player1.name : player2.name} sẽ khó hơn một bậc.`);
   };
 
@@ -774,68 +960,129 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
 
-    const previousCardId = activeCard.id;
-    const replacement = selection.card;
+    onPlayerRewardsChange(nextRewards);
+    setCardDirectorState((current) => recordDirectorStarsSpent(current, REROLL_STAR_COST));
+    onAddRewardEvent({
+      kind: 'rerolled_card',
+      playerIndex: performingPlayerIndex,
+      amount: -REROLL_STAR_COST,
+      cardId: activeCard.id,
+      round: currentRound,
+      timestamp: Date.now(),
+    });
+    setLiveMessage(`${performingPlayer.name} đã dùng ${REROLL_STAR_COST} sao để đổi bài. Lá cũ không được mở khóa.`);
+    replaceStandardCard({ card: selection.card, used: selection.nextUsedCardIds, probabilities: selection.probabilities }, true);
+  };
+
+  /** The free swap for an easier card, once per player and game. */
+  const canChooseLighter = activeCard !== null
+    && getCardDeck(activeCard) === 'standard'
+    && deriveDifficultyStars(activeCard) >= 2
+    && !lighterUsed[performingPlayerIndex];
+  const handleLighter = () => {
+    if (!activeCard || !canChooseLighter || drawState !== 'drawn' || completionCommittedRef.current || scene) return;
+    setShowPenaltyPrompt(false);
+    const selection = selectLighterJourneyCard(journeySelectionOptions, activeCard);
+    if (!selection.card) {
+      warn('Không còn lá nào nhẹ hơn. Quyền đổi của bạn vẫn còn.');
+      return;
+    }
+    setLighterUsed((used) => [used[0] || performingPlayerIndex === 0, used[1] || performingPlayerIndex === 1]);
+    setLiveMessage(`${performingPlayer.name} đã đổi sang một lá nhẹ hơn.`);
+    replaceStandardCard(
+      { card: selection.card, used: selection.nextUsedCardIds, probabilities: selection.probabilities },
+      activeCardWasRerolled,
+    );
+  };
+
+  /** Another card takes the place of the open one. */
+  const replaceStandardCard = (next: DrawnCard, rerolled: boolean) => {
+    if (!activeCard) return;
     if (currentTriggerRef.current) {
-      // Rerolling a clothing card does not force the replacement to be one; the milestone returns a bit later.
+      // Swapping a clothing card does not force the replacement to be one; the milestone returns a bit later.
       const trigger = currentTriggerRef.current;
       setDynamicClothingScheduler((current) =>
         updateDynamicClothingScheduler(current, trigger.itemId, trigger.targetIndex, 'skipped', intimacyPercent, currentRound),
       );
       currentTriggerRef.current = null;
     }
-    onPlayerRewardsChange(nextRewards);
-    setCardDirectorState((current) => recordDirectorStarsSpent(
-      recordDirectedCard(current, replacement),
-      REROLL_STAR_COST,
-    ));
     setClothingJourney((current) => {
       const opportunity = getActiveOpportunity(current, intimacyPercent);
       return opportunity ? resolveClothingOpportunity(current, opportunity.index, 'rerolled') : current;
     });
     recordResolution(activeCard, 'rerolled');
-    onAddRewardEvent({
-      kind: 'rerolled_card',
-      playerIndex: performingPlayerIndex,
-      amount: -REROLL_STAR_COST,
-      cardId: previousCardId,
-      round: currentRound,
-      timestamp: Date.now(),
-    });
-    setUsedCardIds(selection.nextUsedCardIds);
-    setDrawProbabilitySnapshot({ deck: 'standard', probabilities: selection.probabilities });
+    setCardDirectorState((current) => recordDirectedCard(current, next.card));
+    setUsedCardIds(next.used);
+    setDrawProbabilitySnapshot({ deck: 'standard', probabilities: next.probabilities });
     setDrawError(null);
-    setLiveMessage(`${performingPlayer.name} đã dùng ${REROLL_STAR_COST} sao để đổi bài. Lá cũ không được mở khóa.`);
-    soundEngine.stopTimerAlarm();
-    didPlayTimerAlarmRef.current = false;
+    setNotice(null);
     completionCommittedRef.current = false;
-    setIsTimerRunning(false);
-    setTimerSeconds(null);
-    setHasTimerStarted(false);
+    prepareTimer(null);
+    soundEngine.play('reroll');
     setCardExit('rerolled');
     setActiveCard(null);
     setCardFlipped(false);
-    startDrawSequence(
-      replacement,
-      () => {
-        setActiveCard(replacement);
-        setDrawState('drawing');
-        setIsRevealed(!settings.privacyDefault);
-      },
-      () => {
-        setCardFlipped(true);
-        setDrawState('drawn');
-        setTimerSeconds(resolveCardTimerSeconds(replacement));
-        setHasTimerStarted(false);
-        setIsTimerRunning(false);
-        setActiveCardWasRerolled(true);
-      },
-    );
+    dealStandardCard(next.card, rerolled);
+  };
+
+  /** Keeps what the finished turn is about to change; its card joins the collection once it is final. */
+  const offerUndo = (unlockCardId: string | null) => {
+    if (!activeCard) return;
+    openUndo({
+      session: onCheckpoint(),
+      card: activeCard,
+      wasRerolled: activeCardWasRerolled,
+      trigger: currentTriggerRef.current,
+      usedCardIds,
+      clothingJourney,
+      clothingScheduler: dynamicClothingScheduler,
+      waitedClothingTriggerId,
+      cardDirector: cardDirectorState,
+      events: gameEvents,
+      lighterUsed,
+      probabilities: drawProbabilitySnapshot,
+      timer: { seconds: timerSeconds, total: timerTotal, started: hasTimerStarted },
+    }, () => { if (unlockCardId) onUnlockCard(unlockCardId); });
+  };
+
+  /** The turn never happened: its card is open again, the countdown waits. */
+  const handleUndo = () => {
+    const turn = takeUndo();
+    if (!turn) return;
+    soundEngine.play('undo');
+    onRestoreCheckpoint(turn.session);
+    currentTriggerRef.current = turn.trigger;
+    completionCommittedRef.current = false;
+    didPlayTimerAlarmRef.current = turn.timer.seconds === 0;
+    wasTimerRunningBeforeSuspendRef.current = false;
+    setUsedCardIds(turn.usedCardIds);
+    setClothingJourney(turn.clothingJourney);
+    setDynamicClothingScheduler(turn.clothingScheduler);
+    setWaitedClothingTriggerId(turn.waitedClothingTriggerId);
+    setCardDirectorState(turn.cardDirector);
+    setGameEvents(turn.events);
+    setMatchQuestions(null);
+    setLighterUsed(turn.lighterUsed);
+    setDrawProbabilitySnapshot(turn.probabilities);
+    setActiveCard(turn.card);
+    setActiveCardWasRerolled(turn.wasRerolled);
+    setQuickFlip(false);
+    setCardFlipped(true);
+    setIsRevealed(true);
+    setDrawState('drawn');
+    setTimerSeconds(turn.timer.seconds);
+    setTimerTotal(turn.timer.total);
+    setHasTimerStarted(turn.timer.started);
+    setIsTimerRunning(false);
+    setNotice(null);
+    setDrawError(null);
+    setLiveMessage('Đã hoàn tác. Lá vừa rồi đang mở lại.');
   };
 
   /** A spark for every card; confetti only for a milestone, so it still means something. */
   const celebrate = (milestone: boolean) => {
-    soundEngine.playCompleteSound();
+    if (milestone) soundEngine.play('milestone');
+    else soundEngine.playCompleteSound();
     soundEngine.haptic(milestone ? [16, 40, 24] : 14);
     if (reduceMotion) return;
     setSparkId((id) => id + 1);
@@ -860,9 +1107,7 @@ export const GameTable: React.FC<GameTableProps> = ({
 
   /** Tim Hồng is full and both outfits are empty: the couple decides about the Position deck. */
   const openPositionConsent = () => {
-    soundEngine.stopTimerAlarm();
-    setIsTimerRunning(false);
-    setTimerSeconds(null);
+    prepareTimer(null);
     setActiveCard(null);
     setDrawState('idle');
     setCardFlipped(false);
@@ -878,15 +1123,18 @@ export const GameTable: React.FC<GameTableProps> = ({
   ) => {
     if (!activeCard || completionCommittedRef.current) return;
     completionCommittedRef.current = true;
-    recordResolution(activeCard, 'completed');
     const newlyUnlocked = !unlockedCardIds.includes(activeCard.id);
-    if (newlyUnlocked) onUnlockCard(activeCard.id);
+    offerUndo(newlyUnlocked ? activeCard.id : null);
+    recordResolution(activeCard, 'completed');
+    const multiplier = gameEvents.doubleNext ? DOUBLE_MULTIPLIER : 1;
     const gain = calculateCompletedCardIntimacy(
       intimacyPercent,
       activeCard,
       progressionConfig,
       includeCardRemovalBonus,
+      multiplier,
     );
+    if (gameEvents.doubleNext) setGameEvents((current) => ({ ...current, doubleNext: false }));
     const nextIntimacy = gain.nextPercent;
     // Every garment must come off through the cards themselves: the Position
     // deck opens only once Tim Hồng is full AND both outfits are empty.
@@ -968,9 +1216,10 @@ export const GameTable: React.FC<GameTableProps> = ({
       );
       currentTriggerRef.current = null;
     }
-    setGainNotice({
+    setNotice({
+      tone: 'gain',
       text: [
-        appliedTotal > 0 ? `+${appliedTotal}% thân mật` : null,
+        appliedTotal > 0 ? `+${appliedTotal}% thân mật${multiplier > 1 ? ' (nhân đôi)' : ''}` : null,
         `+${earnedStars}★ cho ${performingPlayer.name}`,
         appliedRemoval > 0 ? `gồm +${appliedRemoval}% bỏ đồ` : null,
       ].filter(Boolean).join(' · '),
@@ -1000,9 +1249,9 @@ export const GameTable: React.FC<GameTableProps> = ({
   const finalizeCompletedPosition = () => {
     if (!activeCard || completionCommittedRef.current) return;
     completionCommittedRef.current = true;
-    recordResolution(activeCard, 'completed');
     const newlyUnlocked = !unlockedCardIds.includes(activeCard.id);
-    if (newlyUnlocked) onUnlockCard(activeCard.id);
+    offerUndo(newlyUnlocked ? activeCard.id : null);
+    recordResolution(activeCard, 'completed');
     const gain = calculateCompletedPositionLuxury(
       luxuryIntimacyPercent,
       activeCard,
@@ -1020,7 +1269,8 @@ export const GameTable: React.FC<GameTableProps> = ({
         timestamp: Date.now(),
       }]);
     }
-    setGainNotice({
+    setNotice({
+      tone: 'gain',
       text: `+${gain.totalApplied}% Luxury · lá ${derivePositionDifficultyStars(activeCard)}★`,
       unlocked: newlyUnlocked,
     });
@@ -1038,7 +1288,10 @@ export const GameTable: React.FC<GameTableProps> = ({
   const finalizeSkippedTurn = (outfitsAfter: readonly [OutfitState, OutfitState] = outfitStates) => {
     if (completionCommittedRef.current) return;
     completionCommittedRef.current = true;
+    offerUndo(null);
     if (activeCard) recordResolution(activeCard, 'skipped');
+    soundEngine.play('skip');
+    setNotice({ tone: 'calm', text: 'Đã bỏ qua lá này' });
     setClothingJourney((current) => {
       const opportunity = activeCard ? getActiveOpportunity(current, intimacyPercent) : null;
       return opportunity
@@ -1091,13 +1344,14 @@ export const GameTable: React.FC<GameTableProps> = ({
       completionCommittedRef.current = true;
       recordResolution(activeCard, 'final_viewed');
       if (!unlockedCardIds.includes(activeCard.id)) onUnlockCard(activeCard.id);
-      onFinishGame('have_sex');
+      finishGame('have_sex');
       return;
     }
     if (activeCard.gameplayEffect?.kind === 'pass_turn') {
       completionCommittedRef.current = true;
+      offerUndo(unlockedCardIds.includes(activeCard.id) ? null : activeCard.id);
       recordResolution(activeCard, 'passed');
-      if (!unlockedCardIds.includes(activeCard.id)) onUnlockCard(activeCard.id);
+      setNotice({ tone: 'calm', text: 'Đã chuyển lượt' });
       advanceNextTurn('skipped');
       setLiveMessage(`${currentPlayer.name} đã chuyển lượt theo nội dung lá bài.`);
       return;
@@ -1272,16 +1526,12 @@ export const GameTable: React.FC<GameTableProps> = ({
     releaseActionFocus();
     setCardExit(exit);
     setClothingJourney((current) => advanceClothingTurn(current));
-    soundEngine.stopTimerAlarm();
-    didPlayTimerAlarmRef.current = false;
+    prepareTimer(null);
     setLiveMessage('');
     setDrawState('idle');
     setActiveCard(null);
     setCardFlipped(false);
-    setIsRevealed(!settings.privacyDefault);
-    setTimerSeconds(null);
-    setIsTimerRunning(false);
-    setHasTimerStarted(false);
+    setIsRevealed(opensFaceUp());
     setActiveCardWasRerolled(false);
     setDrawProbabilitySnapshot(null);
     setDrawError(null);
@@ -1292,21 +1542,29 @@ export const GameTable: React.FC<GameTableProps> = ({
     onNextTurn();
   };
 
+  const finishGame = (reason: GameEndReason) => {
+    closeUndo();
+    onFinishGame(reason);
+  };
+
+  const positionOptions = {
+    cards: availableCards,
+    actorIndex: currentPlayerIndex,
+    outfits: outfitStates,
+    usedCardIds: sessionPositionCardIds,
+    luxuryPercent: luxuryIntimacyPercent,
+    config: luxuryProgressionConfig,
+    accountUnlockedCardIds: unlockedCardIds,
+  };
+
   const handlePositionDraw = () => {
-    if ((journeyPhase !== 'position' && journeyPhase !== 'final') || drawState !== 'idle' || finalChoice) return;
-    const selection = selectLuxuryPositionCard({
-      cards: availableCards,
-      actorIndex: currentPlayerIndex,
-      outfits: outfitStates,
-      usedCardIds: sessionPositionCardIds,
-      luxuryPercent: luxuryIntimacyPercent,
-      config: luxuryProgressionConfig,
-      accountUnlockedCardIds: unlockedCardIds,
-    });
+    if ((journeyPhase !== 'position' && journeyPhase !== 'final') || drawState !== 'idle' || finalChoice || pair) return;
+    closeUndo();
+    const selection = selectLuxuryPositionCard(positionOptions);
     if (selection.finalCandidates && selection.finalCandidates.length > 0) {
       soundEngine.playShuffle();
       setDrawError(null);
-      setGainNotice(null);
+      setNotice(null);
       setDrawProbabilitySnapshot({ deck: 'position', probabilities: selection.probabilities });
       setFinalChoice({ candidates: selection.finalCandidates, flips: 1, revealedIds: [] });
       onJourneyPhaseChange('final');
@@ -1328,35 +1586,214 @@ export const GameTable: React.FC<GameTableProps> = ({
             : `Không còn lá Tư thế dành cho ${currentPlayerIndex === 0 ? 'Nam' : 'Nữ'} hoặc Cả hai ở lượt này.`);
       return;
     }
-    soundEngine.stopTimerAlarm();
+    dealPositionCard(nextCard, selection.nextUsedCardIds, selection.probabilities, false);
+  };
+
+  /** A Position card counts as opened once, however often it is turned over. */
+  const markPositionOpened = (card: CardItem) => {
+    if (openedPositionIdRef.current === card.id) return;
+    openedPositionIdRef.current = card.id;
+    onOpenPositionCard(card.id);
+  };
+
+  const beginPositionTurn = (used: string[], probabilities: LuxuryDrawProbabilities) => {
+    closeUndo();
     completionCommittedRef.current = false;
-    setTimerSeconds(null);
-    setIsTimerRunning(false);
-    setHasTimerStarted(false);
+    openedPositionIdRef.current = null;
+    prepareTimer(null);
     setActiveCardWasRerolled(false);
     setActiveCard(null);
-    setIsRevealed(!settings.privacyDefault);
     setCardFlipped(false);
     setDrawError(null);
-    setGainNotice(null);
-    onSessionPositionCardIdsChange(selection.nextUsedCardIds);
-    setDrawProbabilitySnapshot({ deck: 'position', probabilities: selection.probabilities });
+    setNotice(null);
+    onSessionPositionCardIdsChange(used);
+    setDrawProbabilitySnapshot({ deck: 'position', probabilities });
+  };
 
+  const dealPositionCard = (card: CardItem, used: string[], probabilities: LuxuryDrawProbabilities, rerolled: boolean) => {
+    beginPositionTurn(used, probabilities);
     startDrawSequence(
-      nextCard,
+      card,
       () => {
-        setActiveCard(nextCard);
-        setTimerSeconds(resolveCardTimerSeconds(nextCard));
+        const faceUp = opensFaceUp();
+        setActiveCard(card);
+        setIsRevealed(faceUp);
         setDrawState('drawing');
-        onDrawPositionCard(nextCard.id);
-        if (!settings.privacyDefault) onOpenPositionCard(nextCard.id);
-        onJourneyPhaseChange(nextCard.position?.family === 'have_sex' ? 'final' : 'position');
+        onDrawPositionCard(card.id);
+        if (faceUp) markPositionOpened(card);
+        onJourneyPhaseChange(card.position?.family === 'have_sex' ? 'final' : 'position');
       },
       () => {
         setCardFlipped(true);
         setDrawState('drawn');
+        setActiveCardWasRerolled(rerolled);
+        prepareTimer(card);
       },
     );
+  };
+
+  /** Takes stars from the couple's shared wallet, the current player's first. */
+  const payShared = (cost: number, kind: RewardEvent['kind'], cardId?: string): boolean => {
+    const spend = spendSharedStars(playerRewards, currentPlayerIndex, cost);
+    if (!spend) {
+      warn(`Ví chung cần ${cost}★, đang có ${sharedStarBalance}★.`);
+      return false;
+    }
+    onPlayerRewardsChange(spend.rewards);
+    const now = Date.now();
+    spend.paid.forEach((amount, index) => {
+      if (amount <= 0) return;
+      onAddRewardEvent({
+        kind,
+        playerIndex: index as PlayerIndex,
+        amount: -amount,
+        cardId,
+        round: currentRound,
+        timestamp: now,
+      });
+    });
+    setCardDirectorState((current) => recordDirectorStarsSpent(current, cost));
+    setDrawError(null);
+    soundEngine.play('spend');
+    return true;
+  };
+
+  // Stars in the Position deck: two cards to choose from, or the group of the next card.
+  const canBuyPositionDraw = journeyPhase === 'position' && drawState === 'idle' && !activeCard && !finalChoice && !pair
+    && luxuryIntimacyPercent < 100;
+
+  const handlePositionPair = () => {
+    if (!canBuyPositionDraw || scene) return;
+    const chosen = selectPositionPair(positionOptions);
+    if (!chosen) {
+      warn('Không còn đủ hai lá phù hợp cho lượt này. Sao được giữ nguyên.');
+      return;
+    }
+    if (!payShared(POSITION_PAIR_STAR_COST, 'position_pair')) return;
+    closeUndo();
+    setNotice(null);
+    setDrawProbabilitySnapshot({ deck: 'position', probabilities: chosen.probabilities });
+    setPair({ source: 'stars', options: [chosen.options[0], chosen.options[1]] });
+    setPairOpen(true);
+    setLiveMessage(`Ví chung đã dùng ${POSITION_PAIR_STAR_COST} sao. Chọn 1 trong 2 lá.`);
+  };
+
+  const handleOpenFamilies = () => {
+    if (!canBuyPositionDraw || scene) return;
+    // Groups without a card for the current stars would only cost a click.
+    const options = getPositionFamilyOptions(positionOptions).filter((option) =>
+      selectLuxuryPositionCard({ ...positionOptions, familyKey: option.key, skipFinal: true }).card !== null);
+    if (options.length < 2) {
+      warn('Lượt này chỉ còn một nhóm phù hợp. Hai bạn rút bài như thường nhé.');
+      return;
+    }
+    closeUndo();
+    setFamilyOptions(options);
+  };
+
+  const handleChooseFamily = (key: string) => {
+    setFamilyOptions(null);
+    if (!canBuyPositionDraw) return;
+    const selection = selectLuxuryPositionCard({ ...positionOptions, familyKey: key, skipFinal: true });
+    if (!selection.card) {
+      warn('Nhóm này không còn lá phù hợp. Sao được giữ nguyên.');
+      return;
+    }
+    if (!payShared(POSITION_FAMILY_STAR_COST, 'position_family', selection.card.id)) return;
+    dealPositionCard(selection.card, selection.nextUsedCardIds, selection.probabilities, false);
+  };
+
+  const handlePositionReroll = () => {
+    if (
+      !activeCard || journeyPhase !== 'position' || drawState !== 'drawn'
+      || activeCardWasRerolled || completionCommittedRef.current || scene
+    ) return;
+    const selection = selectLuxuryPositionCard({ ...positionOptions, excludedCardIds: [activeCard.id], skipFinal: true });
+    if (!selection.card) {
+      warn('Không còn lá khác phù hợp để đổi. Sao được giữ nguyên.');
+      return;
+    }
+    if (!payShared(POSITION_REROLL_STAR_COST, 'position_reroll', activeCard.id)) return;
+    recordResolution(activeCard, 'rerolled');
+    soundEngine.play('reroll');
+    setCardExit('rerolled');
+    setLiveMessage(`Ví chung đã dùng ${POSITION_REROLL_STAR_COST} sao để đổi lá.`);
+    dealPositionCard(selection.card, selection.nextUsedCardIds, selection.probabilities, true);
+  };
+
+  const handlePairChoose = (index: 0 | 1) => {
+    if (!pair) return;
+    const { card, used } = pair.options[index];
+    if (pair.source === 'event') {
+      // The partner has seen it; the player opens it once the device is back.
+      const played = beginStandardTurn({ card, used, probabilities: drawProbabilities });
+      layChosenCard(played, false);
+      setLiveMessage(`${partner.name} đã chọn lá cho ${currentPlayer.name}.`);
+      return;
+    }
+    beginPositionTurn(used, luxuryDrawProbabilities ?? getLuxuryDrawProbabilities(positionOptions));
+    onDrawPositionCard(card.id);
+    markPositionOpened(card);
+    layChosenCard(card, true);
+  };
+
+  // Event turns come before the draw that follows a milestone.
+  const dueEvent = journeyPhase === 'standard' && drawState === 'idle' && !activeCard && !pair
+    ? getDueEvent(gameEvents, intimacyPercent)
+    : null;
+
+  const handleEventAccept = () => {
+    if (!dueEvent || scene) return;
+    closeUndo();
+    setNotice(null);
+    setDrawError(null);
+    if (dueEvent.kind === 'match') {
+      const questions = pickMatchQuestions(gameEvents, dueEvent.milestone);
+      setGameEvents((current) => ({ ...current, askedIds: [...current.askedIds, ...questions.map((question) => question.id)] }));
+      setMatchQuestions(questions);
+      return;
+    }
+    if (dueEvent.kind === 'double') {
+      setGameEvents((current) => ({ ...finishEvent(current, dueEvent), doubleNext: true }));
+      setNotice({ tone: 'gain', text: 'Lá hoàn thành kế tiếp: gấp đôi %' });
+      return;
+    }
+    setGameEvents((current) => finishEvent(current, dueEvent));
+    const chosen = (forceClothingDare ? selectJourneyPair({ ...journeySelectionOptions, preferredType: 'dare' }) : null)
+      ?? selectJourneyPair(journeySelectionOptions);
+    if (!chosen) {
+      warn('Không đủ hai lá phù hợp để đổi vai. Hai bạn rút bài như thường nhé.');
+      return;
+    }
+    setDrawProbabilitySnapshot({ deck: 'standard', probabilities: chosen.probabilities });
+    setPair({ source: 'event', options: [chosen.options[0], chosen.options[1]] });
+    setPairOpen(false);
+  };
+
+  const handleEventRefuse = () => {
+    if (!dueEvent) return;
+    closeUndo();
+    setNotice(null);
+    soundEngine.playTick();
+    setGameEvents((current) => finishEvent(current, dueEvent));
+  };
+
+  const handleMatchDone = (matches: number) => {
+    setMatchQuestions(null);
+    if (!dueEvent) return;
+    setGameEvents((current) => finishEvent(current, dueEvent));
+    if (matches <= 0) return;
+    const stars = matches * MATCH_STAR_REWARD;
+    onPlayerRewardsChange(giftStars(playerRewards, stars));
+    const now = Date.now();
+    ([0, 1] as const).forEach((playerIndex) => onAddRewardEvent({
+      kind: 'event_stars',
+      playerIndex,
+      amount: stars,
+      round: currentRound,
+      timestamp: now,
+    }));
+    setNotice({ tone: 'gain', text: `Đoán trùng ${matches} câu · +${stars}★ mỗi người` });
   };
 
   const handleDraw = () => {
@@ -1375,46 +1812,24 @@ export const GameTable: React.FC<GameTableProps> = ({
   const chooseFinalCard = (card: CardItem) => {
     setFinalChoice(null);
     completionCommittedRef.current = false;
-    soundEngine.playCompleteSound();
+    soundEngine.play('final');
     soundEngine.haptic([40, 50, 40, 50, 120]);
     if (!reduceMotion) fireFinalConfetti();
     setActiveCard(card);
-    setIsRevealed(true);
+    setIsRevealed(!concealedRef.current);
     setCardFlipped(true);
     setDrawState('drawn');
-    setTimerSeconds(null);
-    setHasTimerStarted(false);
-    setIsTimerRunning(false);
+    prepareTimer(null);
     setDrawError(null);
     onDrawPositionCard(card.id);
-    onOpenPositionCard(card.id);
+    openedPositionIdRef.current = null;
+    markPositionOpened(card);
     setLiveMessage('Hai bạn đã chọn lá cuối.');
   };
 
   const handleBuyFinalFlips = (flips: 2 | 3) => {
     if (!finalChoice || finalChoice.flips >= flips || finalChoice.candidates.length < flips) return;
-    const cost = finalFlipCost(flips, finalChoice.flips);
-    const spend = spendSharedStars(playerRewards, currentPlayerIndex, cost);
-    if (!spend) {
-      setDrawError(`Ví chung cần ${cost}★ để lật thêm lá.`);
-      return;
-    }
-    onPlayerRewardsChange(spend.rewards);
-    const now = Date.now();
-    spend.paid.forEach((amount, index) => {
-      if (amount > 0) {
-        onAddRewardEvent({
-          kind: 'final_card_flips',
-          playerIndex: index as PlayerIndex,
-          amount: -amount,
-          round: currentRound,
-          timestamp: now,
-        });
-      }
-    });
-    setCardDirectorState((current) => recordDirectorStarsSpent(current, cost));
-    setDrawError(null);
-    soundEngine.playCardFlip();
+    if (!payShared(finalFlipCost(flips, finalChoice.flips), 'final_card_flips')) return;
     setFinalChoice({
       ...finalChoice,
       flips,
@@ -1435,15 +1850,14 @@ export const GameTable: React.FC<GameTableProps> = ({
       setLiveMessage('Cả hai cần ít nhất đạt trạng thái chỉ còn đồ lót trước khi vào Bộ Tư thế.');
       return;
     }
-    soundEngine.stopTimerAlarm();
+    closeUndo();
+    prepareTimer(null);
     setLiveMessage('');
     setDrawError(null);
+    setNotice(null);
     setActiveCard(null);
     setDrawState('idle');
     setIsRevealed(false);
-    setTimerSeconds(null);
-    setIsTimerRunning(false);
-    setHasTimerStarted(false);
     onJourneyPhaseChange('position');
   };
 
@@ -1454,8 +1868,10 @@ export const GameTable: React.FC<GameTableProps> = ({
       return;
     }
     completionCommittedRef.current = true;
+    offerUndo(null);
     recordResolution(activeCard, 'skipped');
-    soundEngine.playTick();
+    soundEngine.play('skip');
+    setNotice({ tone: 'calm', text: 'Đã bỏ qua lá này' });
     advanceNextTurn('skipped');
   };
 
@@ -1464,6 +1880,7 @@ export const GameTable: React.FC<GameTableProps> = ({
   );
   const handlePrepareNextGarment = () => {
     if (preparationTargetIndex === undefined) return;
+    closeUndo();
     setRemovalRequest({ source: 'preparation', targetIndex: preparationTargetIndex });
   };
 
@@ -1526,13 +1943,15 @@ export const GameTable: React.FC<GameTableProps> = ({
           ? 'choose'
           : drawState === 'shuffling' || drawState === 'drawing'
             ? 'moving'
-            : !activeCard
-              ? 'idle'
-              : !isRevealed
-                ? 'hidden'
-                : isFinalPositionCard
-                  ? 'final'
-                  : isPositionCard ? 'position' : 'answer';
+            : pair
+              ? 'pair'
+              : !activeCard
+                ? dueEvent ? 'event' : 'idle'
+                : !isRevealed
+                  ? 'hidden'
+                  : isFinalPositionCard
+                    ? 'final'
+                    : isPositionCard ? 'position' : 'answer';
   const partnerIndex: PlayerIndex = currentPlayerIndex === 0 ? 1 : 0;
   const partner = partnerIndex === 0 ? player1 : player2;
   const boostPending = pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === partnerIndex);
@@ -1544,7 +1963,9 @@ export const GameTable: React.FC<GameTableProps> = ({
     releaseActionFocus();
     soundEngine.playTick();
     setIsRevealed(true);
-    if (isPositionCard) onOpenPositionCard(activeCard.id);
+    // The card's badges lie under this message.
+    setNotice((current) => (current?.tone === 'restored' ? null : current));
+    if (isPositionCard) markPositionOpened(activeCard);
   };
 
   const handleDropCard = () => {
@@ -1557,11 +1978,22 @@ export const GameTable: React.FC<GameTableProps> = ({
   const openPause = useCallback(() => setShowPause(true), []);
   useTableShortcuts(!isPaused && scene === null, () => { if (!navigationLocked) openPause(); });
 
+  // The guide points at the idle table: on the first turn of a first game, or when asked for.
+  const [guideWanted, setGuideWanted] = useState(() => !initialSnapshot && !hasSeenTableGuide());
+  const handledGuideRequestRef = useRef(guideRequestId);
+  useEffect(() => {
+    if (guideRequestId === handledGuideRequestRef.current) return;
+    handledGuideRequestRef.current = guideRequestId;
+    setGuideWanted(true);
+    if (tableState !== 'idle') setNotice({ tone: 'calm', text: 'Hướng dẫn sẽ hiện ở lượt rút kế tiếp' });
+  }, [guideRequestId, tableState]);
+  const showGuide = guideWanted && tableState === 'idle' && !isPaused && scene === null;
+
   // The button a player needs next gets the focus when the old one is gone,
   // so the whole game can be played with Space or Enter.
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (isPaused || scene) return;
+    if (isPaused || scene || showGuide) return;
     const focusMainAction = () => {
       if (isDialogOpen() || (document.activeElement && document.activeElement !== document.body)) return;
       const button = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-main-action]') ?? [])]
@@ -1575,16 +2007,9 @@ export const GameTable: React.FC<GameTableProps> = ({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [tableState, hasTimerStarted, currentRound, isPaused, scene]);
+  }, [tableState, hasTimerStarted, currentRound, isPaused, scene, showGuide, pairOpen]);
 
-  // Clicks right after the table changes are ignored, so a double click never does two things.
-  const lastChangeRef = useRef(0);
-  useLayoutEffect(() => {
-    lastChangeRef.current = performance.now();
-  }, [tableState, currentRound, hasTimerStarted]);
-  const guarded = (action: () => void) => () => {
-    if (performance.now() - lastChangeRef.current >= TABLE_TIMING.actionGuard) action();
-  };
+  const guarded = useActionGuard(tableState, currentRound, hasTimerStarted, pairOpen);
 
   const renderPanel = (index: PlayerIndex, mobile = false) => (
     <PlayerPanel
@@ -1611,8 +2036,11 @@ export const GameTable: React.FC<GameTableProps> = ({
             boost={!inPositionDeck && (boostAffordable || boostPending)
               ? { targetName: partner.name, pending: boostPending, affordable: boostAffordable }
               : null}
+            sharedBalance={canBuyPositionDraw ? sharedStarBalance : null}
             onDraw={guarded(handleDraw)}
             onBoost={guarded(handleQueueDifficultyBoost)}
+            onPair={guarded(handlePositionPair)}
+            onFamily={guarded(handleOpenFamilies)}
           />
         );
       case 'choose':
@@ -1639,10 +2067,12 @@ export const GameTable: React.FC<GameTableProps> = ({
               balance: playerRewards[performingPlayerIndex].starBalance,
               used: activeCardWasRerolled,
             }}
+            lighter={canChooseLighter}
             onSkip={guarded(handleSkip)}
             onStart={guarded(handleTimerControl)}
             onComplete={guarded(handleComplete)}
             onReroll={guarded(handleReroll)}
+            onLighter={guarded(handleLighter)}
           />
         );
       case 'position':
@@ -1650,8 +2080,10 @@ export const GameTable: React.FC<GameTableProps> = ({
           <TableActions
             state="position"
             completeLabel={completionActionLabel}
+            reroll={journeyPhase === 'position' ? { balance: sharedStarBalance, used: activeCardWasRerolled } : null}
             onSkip={guarded(() => handlePositionAdvance(false))}
             onComplete={guarded(() => handlePositionAdvance(true))}
+            onReroll={guarded(handlePositionReroll)}
           />
         );
       case 'final':
@@ -1661,10 +2093,10 @@ export const GameTable: React.FC<GameTableProps> = ({
     }
   };
 
-  const toast = drawError && !positionEmpty
-    ? { tone: 'warning' as const, text: drawError }
-    : gainNotice && drawState === 'idle' && !scene
-      ? { tone: 'gain' as const, text: gainNotice.text, unlocked: gainNotice.unlocked }
+  const toast: TableNotice | null = drawError && !positionEmpty
+    ? { tone: 'warning', text: drawError }
+    : notice && !scene && (notice.tone === 'warning' || notice.tone === 'restored' || drawState === 'idle')
+      ? notice
       : null;
 
   return (
@@ -1689,15 +2121,30 @@ export const GameTable: React.FC<GameTableProps> = ({
         drawProbabilities={drawProbabilities}
         luxuryProbabilities={luxuryDrawProbabilities}
         difficultyBoostActive={activeDifficultyBoost !== null}
+        doubleNext={gameEvents.doubleNext && intimacyPercent < 100}
         locked={navigationLocked}
         isMuted={isMuted}
+        isMusicOn={isMusicOn}
+        hapticsOn={canVibrate ? hapticsOn : null}
         coupleName={coupleName}
         reduceMotion={reduceMotion}
         onToggleMute={handleToggleMute}
+        onToggleMusic={handleToggleMusic}
+        onToggleHaptics={() => setHapticsOn(soundEngine.toggleHaptics())}
         onOpenRules={onOpenRules}
-        onOpenCollection={onOpenCollection}
-        onOpenSummary={onOpenSummary}
-        onOpenAccount={onOpenAccountModal}
+        onOpenCollection={() => {
+          closeUndo();
+          onOpenCollection();
+        }}
+        onOpenSummary={() => {
+          closeUndo();
+          onOpenSummary();
+        }}
+        onOpenAccount={onOpenAccountModal && (() => {
+          closeUndo();
+          onOpenAccountModal();
+        })}
+        onHide={onQuickHide}
         onPause={openPause}
         onEnd={() => setShowEndConfirm(true)}
       />
@@ -1705,36 +2152,6 @@ export const GameTable: React.FC<GameTableProps> = ({
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {drawError || liveMessage || `${currentPlayer.name} đang tới lượt, còn ${getPresentGarmentSlots(outfitStates[currentPlayerIndex]).length} món đồ.`}
       </p>
-
-      <div className="game-toast">
-        <AnimatePresence>
-          {toast && (
-            <motion.div
-              key={toast.text}
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(-8px)' }}
-              animate={{ opacity: 1, transform: 'translateY(0px)' }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: DURATION.fast, ease: EASE_OUT }}
-              role="status"
-              className={`flex max-w-md items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-[0_12px_40px_rgba(0,0,0,.5)] ${
-                toast.tone === 'warning'
-                  ? 'border-amber-300/45 bg-[#2a1a08] text-amber-100'
-                  : 'border-rose-300/40 bg-[#2b101b] text-rose-50'
-              }`}
-            >
-              {toast.tone === 'warning'
-                ? <TriangleAlert className="h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
-                : <Heart className="h-4 w-4 shrink-0 fill-rose-400/70 text-rose-300" aria-hidden="true" />}
-              <span>{toast.text}</span>
-              {toast.tone === 'gain' && toast.unlocked && (
-                <span className="flex shrink-0 items-center gap-1 text-emerald-200">
-                  <LockOpen className="h-4 w-4" aria-hidden="true" /> Lá mới
-                </span>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
 
       <div className="game-outfit-mobile" aria-label="Trang phục hiện tại của hai người chơi">
         {renderPanel(0, true)}
@@ -1745,6 +2162,20 @@ export const GameTable: React.FC<GameTableProps> = ({
         <div className="game-stage__side">{renderPanel(0)}</div>
 
         <div className="game-stage__center">
+          <div className="game-toast">
+            <AnimatePresence>
+              {toast && (
+                <TableToast
+                  key={toast.text}
+                  notice={toast}
+                  undo={undo && toast.tone !== 'warning'
+                    ? { id: undo.id, held: undoHeld, onUndo: handleUndo, onHold: setUndoHovered }
+                    : null}
+                  reduceMotion={reduceMotion}
+                />
+              )}
+            </AnimatePresence>
+          </div>
           {tableState === 'position-consent' ? (
             <div className="table-span">
               <PositionConsent
@@ -1753,7 +2184,7 @@ export const GameTable: React.FC<GameTableProps> = ({
                 nextToPrepare={preparationTargetIndex === undefined ? null : preparationTargetIndex === 0 ? player1.name : player2.name}
                 reduceMotion={reduceMotion}
                 onPrepare={guarded(handlePrepareNextGarment)}
-                onFinish={guarded(() => onFinishGame('pink_complete'))}
+                onFinish={guarded(() => finishGame('pink_complete'))}
                 onEnter={guarded(handleEnterPositionJourney)}
               />
             </div>
@@ -1774,7 +2205,34 @@ export const GameTable: React.FC<GameTableProps> = ({
               <PositionEmpty
                 message={drawError ?? ''}
                 onPass={guarded(() => advanceNextTurn('skipped'))}
-                onFinish={guarded(() => onFinishGame('no_cards'))}
+                onFinish={guarded(() => finishGame('no_cards'))}
+              />
+            </div>
+          ) : tableState === 'pair' && pair ? (
+            <div className="table-span">
+              <PairChoice
+                pair={pair}
+                open={pairOpen}
+                chooserName={pair.source === 'event' ? partner.name : currentPlayer.name}
+                playerName={currentPlayer.name}
+                reduceMotion={reduceMotion}
+                onOpen={guarded(() => setPairOpen(true))}
+                onChoose={(index) => guarded(() => handlePairChoose(index))()}
+              />
+            </div>
+          ) : tableState === 'event' && dueEvent ? (
+            <div className="table-span">
+              <EventTurn
+                event={dueEvent}
+                player={currentPlayer}
+                partner={partner}
+                seatNames={[player1.name, player2.name]}
+                questions={matchQuestions}
+                concealed={concealed}
+                reduceMotion={reduceMotion}
+                onAccept={guarded(handleEventAccept)}
+                onRefuse={guarded(handleEventRefuse)}
+                onMatchDone={handleMatchDone}
               />
             </div>
           ) : (
@@ -1802,10 +2260,13 @@ export const GameTable: React.FC<GameTableProps> = ({
                       turnLine={turnLine}
                       clothingNote={clothingNote}
                       revealHint={`Lá bài đang úp để không ai đọc trước. Mở khi ${isPositionCard ? 'cả hai' : performingPlayer.name} đã sẵn sàng.`}
-                      timer={timerSeconds === null ? null : { seconds: timerSeconds, started: hasTimerStarted, running: isTimerRunning }}
+                      timer={timerSeconds === null
+                        ? null
+                        : { seconds: timerSeconds, total: timerTotal, started: hasTimerStarted, running: isTimerRunning }}
                       reduceMotion={reduceMotion}
                       onToggleFavorite={() => onToggleFavorite(activeCard.id)}
                       onTimerControl={guarded(handleTimerControl)}
+                      onTimerExtend={handleTimerExtend}
                     />
                   )}
                 </AnimatePresence>
@@ -1838,8 +2299,10 @@ export const GameTable: React.FC<GameTableProps> = ({
             penaltyEnabled={settings.penaltyClothingEnabled}
             canRemoveGarment={canApplyPenaltyGarment}
             lockedReason={penaltyLockedReason}
+            canChooseLighter={canChooseLighter}
             onReturn={() => setShowPenaltyPrompt(false)}
             onChooseGarment={handlePenaltyGarmentChoice}
+            onChooseLighter={handleLighter}
             onContinueWithoutPenalty={() => finalizeSkippedTurn()}
           />
         )}
@@ -1894,10 +2357,20 @@ export const GameTable: React.FC<GameTableProps> = ({
           onCancel={() => setShowEndConfirm(false)}
           onConfirm={() => {
             setShowEndConfirm(false);
-            onFinishGame('manual');
+            finishGame('manual');
           }}
         />
       )}
+      {familyOptions && (
+        <FamilyPicker
+          options={familyOptions}
+          balance={sharedStarBalance}
+          reduceMotion={reduceMotion}
+          onChoose={handleChooseFamily}
+          onClose={() => setFamilyOptions(null)}
+        />
+      )}
+      {showGuide && <TableGuide onClose={() => setGuideWanted(false)} />}
     </div>
   );
 };

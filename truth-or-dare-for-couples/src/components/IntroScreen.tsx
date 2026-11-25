@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
+  BookHeart,
   BookOpen,
   Code2,
   Flame,
@@ -35,6 +36,9 @@ interface IntroScreenProps {
   savedGame?: SavedGameSession | null;
   onResume?: () => void;
   onDiscardSavedGame?: () => void;
+  /** Evenings the couple kept on this device. */
+  journalCount?: number;
+  onOpenJournal?: () => void;
 }
 
 const FOCUS = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200';
@@ -52,6 +56,8 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
   savedGame = null,
   onResume,
   onDiscardSavedGame,
+  journalCount = 0,
+  onOpenJournal,
 }) => {
   const reduceMotion = useReducedMotion();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -228,17 +234,33 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
           />
         )}
 
-        <button
-          type="button"
-          onClick={() => {
-            soundEngine.playTick();
-            onOpenRules();
-          }}
-          className={`mt-3 flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/[0.05] hover:text-rose-100 ${FOCUS}`}
-        >
-          <HelpCircle className="h-4 w-4 text-rose-300" aria-hidden="true" />
-          <span>Cách chơi & luật phạt</span>
-        </button>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-1">
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playTick();
+              onOpenRules();
+            }}
+            className={`flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/[0.05] hover:text-rose-100 ${FOCUS}`}
+          >
+            <HelpCircle className="h-4 w-4 text-rose-300" aria-hidden="true" />
+            <span>Cách chơi & luật phạt</span>
+          </button>
+          {isPlayer && journalCount > 0 && (
+            <button
+              type="button"
+              data-action="journal"
+              onClick={() => {
+                soundEngine.playTick();
+                onOpenJournal?.();
+              }}
+              className={`flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/[0.05] hover:text-rose-100 ${FOCUS}`}
+            >
+              <BookHeart className="h-4 w-4 text-amber-200" aria-hidden="true" />
+              <span>Nhật ký · {journalCount}</span>
+            </button>
+          )}
+        </div>
       </motion.div>
 
       <footer className="intro-screen__footer">

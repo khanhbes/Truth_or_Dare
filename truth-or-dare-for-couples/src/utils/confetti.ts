@@ -2,8 +2,8 @@ import canvasConfetti, { type CreateTypes, type Options, type Shape } from 'canv
 
 /**
  * Confetti drawn on the page itself. The library's default uses a worker built
- * from its own source text, and that source no longer runs once the production
- * build has renamed it: the canvas appeared but stayed empty.
+ * from its own source text, and a build that renames that source can break it:
+ * the canvas appeared but stayed empty.
  */
 let cannon: CreateTypes | null = null;
 

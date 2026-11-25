@@ -20,7 +20,7 @@
     "smoke:game": "node scripts/smoke-game.mjs",
     "clean": "node -e \"for (const p of ['dist','server.js']) require('fs').rmSync(p,{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/utils/wardrobe.test.ts src/utils/cardSelection.test.ts src/utils/cardTimer.test.ts src/utils/clothingJourney.test.ts src/utils/dynamicClothingScheduler.test.ts src/utils/positionStarMigration.test.ts src/utils/progression.test.ts src/utils/drawAudit.test.ts src/utils/accountCatalog.test.ts src/utils/cardSchema.test.ts src/utils/cardDirector.test.ts src/utils/rewards.test.ts src/utils/gameResolution.test.ts src/utils/playerStorage.test.ts src/utils/cardImageStore.test.ts src/utils/gameSession.test.ts src/utils/unlockSync.test.ts src/data/cardIcons.test.ts src/data/localCatalog.test.ts src/data/expansionCards.test.ts functions/_shared/catalog.test.ts functions/_shared/pin.test.ts"
+    "test": "tsx --test src/utils/wardrobe.test.ts src/utils/cardSelection.test.ts src/utils/cardTimer.test.ts src/utils/clothingJourney.test.ts src/utils/dynamicClothingScheduler.test.ts src/utils/positionStarMigration.test.ts src/utils/progression.test.ts src/utils/drawAudit.test.ts src/utils/accountCatalog.test.ts src/utils/cardSchema.test.ts src/utils/cardDirector.test.ts src/utils/rewards.test.ts src/utils/gameResolution.test.ts src/utils/playerStorage.test.ts src/utils/cardImageStore.test.ts src/utils/gameSession.test.ts src/utils/gameEvents.test.ts src/utils/gameJournal.test.ts src/utils/unlockSync.test.ts src/data/cardIcons.test.ts src/data/localCatalog.test.ts src/data/expansionCards.test.ts functions/_shared/catalog.test.ts functions/_shared/pin.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -45,7 +45,6 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
-    "vite-plugin-obfuscator": "^1.0.5",
     "wrangler": "^4.124.0"
   }
 }

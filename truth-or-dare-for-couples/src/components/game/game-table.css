@@ -32,6 +32,10 @@
     /* 92rem is where the root stops growing; a wider row would sit off centre. */
     --center-w: min(54rem, calc(min(100vw, 92rem) - var(--panel-w) * 2 - var(--stage-gap) * 2 - 2.5rem));
   }
+
+  .game-root[data-game-state='pair'] {
+    --center-w: min(46rem, calc(min(100vw, 92rem) - var(--panel-w) * 2 - var(--stage-gap) * 2 - 2.5rem));
+  }
 }
 
 /* ----- Header: one bar on larger screens, three rows on phones ----- */
@@ -188,27 +192,81 @@
   }
 }
 
-/* Short messages float between the header and the deck; nothing moves for them. */
+/* Short messages float over the top edge of the table; nothing moves for them, and the
+   header (quick hide, pause) always stays free. */
 .game-toast {
-  position: fixed;
-  z-index: 45;
-  top: 1rem;
-  right: 0;
-  left: 0;
+  position: absolute;
+  z-index: 20;
+  top: -.35rem;
+  left: 50%;
   display: flex;
+  width: max-content;
+  max-width: min(calc(100vw - 1.5rem), 36rem);
   justify-content: center;
-  padding: 0 1rem;
   pointer-events: none;
+  transform: translateX(-50%);
 }
 
-@media (min-width: 1024px) {
-  .game-toast {
-    top: calc(1.1rem + var(--header-h));
-  }
+.game-toast__pill {
+  display: flex;
+  min-height: 2.75rem;
+  max-width: 100%;
+  align-items: center;
+  gap: .5rem;
+  border-width: 1px;
+  border-radius: 1.4rem;
+  padding: .3rem 1rem;
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
 
-  .resume-notice {
-    top: 5.35rem;
-  }
+.game-toast__pill[data-undo] {
+  pointer-events: auto;
+}
+
+.game-toast__undo {
+  position: relative;
+  display: flex;
+  min-height: 2.25rem;
+  flex: none;
+  align-items: center;
+  gap: .4rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 999px;
+  margin-right: -.6rem;
+  background: rgba(255, 255, 255, .1);
+  padding: 0 .85rem;
+  color: #fff;
+  font-size: .8125rem;
+  font-weight: 700;
+  transition: background-color .2s ease;
+}
+
+.game-toast__undo:hover {
+  background: rgba(255, 255, 255, .2);
+}
+
+/* How long the turn can still be taken back. */
+.game-toast__bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: #ffd58a;
+  transform-origin: left;
+  animation: undo-bar 5s linear forwards;
+}
+
+.game-toast__bar[data-held] {
+  animation-play-state: paused;
+}
+
+@keyframes undo-bar {
+  to { transform: scaleX(0); }
 }
 
 /* ----- Stage: panel · card · panel ----- */
@@ -231,6 +289,7 @@
 }
 
 .game-stage__center {
+  position: relative;
   display: grid;
   min-width: 0;
   grid-template-rows: var(--card-h) var(--action-h);
@@ -285,6 +344,151 @@
   padding: clamp(1rem, 2.6svh, 1.6rem);
   text-align: center;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .45);
+}
+
+/* Event turns and the gate before two cards: the rose of Tim Hồng instead of the navy deck. */
+.table-panel--event {
+  border-color: rgba(255, 150, 180, .4);
+  background: linear-gradient(160deg, #2a0f1b, #170a12 70%);
+}
+
+.table-panel__seal {
+  display: grid;
+  width: 3.25rem;
+  height: 3.25rem;
+  place-items: center;
+  border: 1px solid rgba(255, 220, 160, .5);
+  border-radius: 999px;
+  margin: 0 auto;
+  background: rgba(255, 200, 140, .12);
+  color: #ffe2b0;
+}
+
+/* ----- Two cards, one is kept ----- */
+.pair-choice {
+  display: flex;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: clamp(.6rem, 1.8svh, 1rem);
+  text-align: center;
+}
+
+.pair-choice__cards {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(.6rem, 1.6vw, 1.25rem);
+}
+
+.pair-card {
+  display: flex;
+  min-height: 0;
+  max-height: 30rem;
+  flex-direction: column;
+  gap: .6rem;
+  border: 2px solid rgba(212, 175, 55, .55);
+  border-radius: 1.1rem;
+  background: linear-gradient(165deg, #2a0f1b, #14080e);
+  padding: 1rem .9rem .9rem;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .5);
+}
+
+.pair-card[data-deck='position'] {
+  border-color: rgba(226, 194, 117, .6);
+  background: linear-gradient(160deg, #14244a, #080d20 70%);
+}
+
+.pair-card__body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.pair-card__art {
+  width: clamp(3.5rem, 13svh, 6.5rem);
+  height: clamp(3.5rem, 13svh, 6.5rem);
+  object-fit: contain;
+}
+
+.pair-card__text {
+  max-width: 34ch;
+  color: #fff;
+  font-size: clamp(.9375rem, 2.2svh, 1.0625rem);
+  font-weight: 500;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* Longer texts give up some size and some of the picture instead of scrolling. */
+.pair-card[data-density='compact'] .pair-card__art {
+  width: clamp(3.25rem, 11svh, 5.5rem);
+  height: clamp(3.25rem, 11svh, 5.5rem);
+}
+
+.pair-card[data-density='dense'] .pair-card__art {
+  width: clamp(3rem, 8.5svh, 4.5rem);
+  height: clamp(3rem, 8.5svh, 4.5rem);
+}
+
+.pair-card[data-density='dense'] .pair-card__text {
+  max-width: 42ch;
+  font-size: clamp(.875rem, 1.95svh, .9375rem);
+}
+
+.pair-card__choose {
+  min-height: 2.9rem;
+  flex: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f7e7b0, #d4af37);
+  padding: 0 1rem;
+  color: #1a0b11;
+  font-size: .9375rem;
+  font-weight: 700;
+}
+
+.pair-card__choose--luxury {
+  background: linear-gradient(135deg, #f7e7b0, #cda95c);
+  color: #08101f;
+}
+
+/* ----- First-time guide ----- */
+.table-guide {
+  position: fixed;
+  z-index: 115;
+  inset: 0;
+}
+
+.table-guide__dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 4, 7, .8);
+}
+
+/* The hole is the only bright place; its shadow covers the rest. */
+.table-guide__hole {
+  position: fixed;
+  border: 2px solid #ffd58a;
+  border-radius: 1.1rem;
+  box-shadow: 0 0 0 100vmax rgba(8, 4, 7, .8);
+  pointer-events: none;
+}
+
+.table-guide__panel {
+  position: fixed;
+  border: 1px solid rgba(255, 220, 160, .4);
+  border-radius: 1.25rem;
+  background: #1d1017;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+}
+
+.table-guide__panel:focus {
+  outline: none;
 }
 
 /* ----- Card back, deck ----- */
@@ -573,7 +777,60 @@
   justify-content: space-between;
   gap: .5rem;
   border-top: 1px solid rgba(255, 255, 255, .12);
+  /* As tall as its buttons, so starting the countdown does not move the text above. */
+  min-height: calc(2.25rem + 1px + 10 * 100cqh / 480);
   padding-top: calc(10 * 100cqh / 480);
+}
+
+/* Narrow cards keep the numbers and drop the words. */
+@container (max-width: 17.5rem) {
+  .table-card__timer-word {
+    display: none;
+  }
+}
+
+/* The countdown runs around the card: readable from the other side of the bed.
+   A layer of its own, so a tick repaints the ring and not the whole card. */
+.table-card__ring {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.table-card__ring rect {
+  x: 2px;
+  y: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  rx: 1rem;
+  fill: none;
+  stroke: #ffd58a;
+  stroke-width: 4px;
+  stroke-dasharray: 1 1;
+  transition: stroke-dashoffset .28s cubic-bezier(.22, 1, .36, 1);
+}
+
+.table-card__ring .table-card__ring-track {
+  stroke: rgba(255, 255, 255, .14);
+  stroke-dasharray: none;
+}
+
+.table-card__ring[data-urgent] rect:not(.table-card__ring-track) {
+  stroke: #fb7185;
+}
+
+/* One beat for each of the last seconds. */
+.table-card__beat {
+  display: inline-block;
+  animation: timer-beat .5s cubic-bezier(.22, 1, .36, 1);
+}
+
+@keyframes timer-beat {
+  from { transform: scale(1.45); }
 }
 
 /* A completed card leaves a short sparkle, not a full confetti burst. */
@@ -1197,6 +1454,19 @@ html[data-dialog-open] .game-header *::after {
     right: -4%;
     left: -4%;
   }
+
+  .pair-choice__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pair-card {
+    max-height: none;
+  }
+
+  .pair-card__art {
+    width: 3.5rem;
+    height: 3.5rem;
+  }
 }
 
 @media (max-width: 390px) {
@@ -1228,6 +1498,7 @@ html[data-dialog-open] .game-header *::after {
   .table-deck__layer,
   .table-deck__layer .card-back,
   .table-card__flip,
+  .table-card__ring rect,
   .game-header .game-header__fill {
     transition-duration: .08s;
   }
@@ -1242,6 +1513,8 @@ html[data-dialog-open] .game-header *::after {
   }
 
   .game-header__beat,
+  .game-toast__bar,
+  .table-card__beat,
   .table-deck[data-phase='shuffling'] .table-deck__layer,
   .table-deck--position .table-deck__layer:last-child .card-back::after,
   .final-choice__head,

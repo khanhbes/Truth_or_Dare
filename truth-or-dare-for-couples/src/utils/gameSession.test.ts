@@ -56,6 +56,7 @@ const makeSession = (): GameSessionState => {
     ],
     pendingDifficultyBoosts: [{ ownerPlayerIndex: 1, targetPlayerIndex: 0, queuedRound: 8 }],
     rewardEvents: [],
+    startedAt: NOW - 40 * 60_000,
     table: {
       usedCardIds: ['a', 'b'],
       clothingJourney: createClothingJourney(),
@@ -66,6 +67,9 @@ const makeSession = (): GameSessionState => {
       activeCardWasRerolled: true,
       clothingTrigger: { itemId: 'strip-1-0-5', targetIndex: 0 },
       finalChoice: null,
+      events: { plan: ['swap', 'double', 'match'], done: 1, doubleNext: true, askedIds: ['m25-first'] },
+      lighterUsed: [true, false],
+      pair: null,
     },
   };
 };
@@ -99,6 +103,49 @@ test('a saved game comes back exactly: turn, hearts, stars, clothes and card', (
   assert.equal(restored.table.activeCard?.id, INITIAL_CARDS[0].id);
   assert.equal(restored.table.activeCardWasRerolled, true);
   assert.deepEqual(restored.table.clothingTrigger, { itemId: 'strip-1-0-5', targetIndex: 0 });
+  assert.deepEqual(restored.table.events, session.table.events);
+  assert.deepEqual(restored.table.lighterUsed, [true, false]);
+  assert.equal(restored.startedAt, session.startedAt);
+});
+
+test('two cards that wait for a choice survive a refresh, unless a card is already on the table', () => {
+  const session = makeSession();
+  const [first, second] = INITIAL_CARDS.filter((card) => card.deck === 'position');
+  const pair: NonNullable<GameSessionState['table']['pair']> = {
+    source: 'stars',
+    options: [
+      { card: { ...first, customImage: 'data:image/png;base64,AAAA' }, used: ['x', first.id] },
+      { card: second, used: ['x', second.id] },
+    ],
+  };
+  const text = serializeGameSession({ ...session, table: { ...session.table, activeCard: null, pair } }, NOW);
+  assert.doesNotMatch(text, /base64/);
+  const restored = hydrateGameSession(JSON.parse(text), NOW);
+  assert.equal(restored?.table.pair?.source, 'stars');
+  assert.deepEqual(restored?.table.pair?.options.map((option) => option.card.id), [first.id, second.id]);
+  assert.deepEqual(restored?.table.pair?.options[1].used, ['x', second.id]);
+
+  const withCard = hydrateGameSession(JSON.parse(serializeGameSession({ ...session, table: { ...session.table, pair } }, NOW)), NOW);
+  assert.equal(withCard?.table.pair, null);
+  const broken = JSON.parse(text);
+  broken.table.pair.options = [broken.table.pair.options[0]];
+  assert.equal(hydrateGameSession(broken, NOW)?.table.pair, null);
+});
+
+test('a game saved before event turns existed goes on without the milestones it has passed', () => {
+  const old = JSON.parse(serializeGameSession(makeSession(), NOW));
+  delete old.startedAt;
+  delete old.table.events;
+  delete old.table.lighterUsed;
+  delete old.table.pair;
+  const restored = hydrateGameSession(old, NOW);
+  assert.equal(restored?.startedAt, null);
+  assert.equal(restored?.table.events.done, 1);
+  assert.equal(restored?.table.events.doubleNext, false);
+  assert.deepEqual(restored?.table.lighterUsed, [false, false]);
+  assert.equal(restored?.table.pair, null);
+  // A start after the save makes no sense.
+  assert.equal(hydrateGameSession({ ...old, startedAt: NOW + 5 }, NOW)?.startedAt, null);
 });
 
 test('card illustrations are not written to storage', () => {

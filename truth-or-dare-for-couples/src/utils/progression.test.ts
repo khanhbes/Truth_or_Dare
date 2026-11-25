@@ -14,11 +14,15 @@ import {
   getCardDeck,
   getStandardCardPerformerIndex,
   getJourneyDrawProbabilities,
+  getPositionFamilyOptions,
   hydrateProgressionConfig,
   hydrateLuxuryProgressionConfig,
   isStandardJourneyCardEligible,
   selectJourneyCard,
+  selectJourneyPair,
+  selectLighterJourneyCard,
   selectLuxuryPositionCard,
+  selectPositionPair,
   validateLuxuryProgressionConfig,
   validateProgressionConfig,
 } from './progression';
@@ -706,4 +710,144 @@ test('progression validators flag non-monotonic curves and empty star tiers whil
   assert.ok(warnings.some((w) => w.includes('40–59%')));
   assert.ok(warnings.some((w) => w.includes('10★')));
   assert.ok(warnings.some((w) => w.includes('Điểm cộng Luxury trung bình')));
+});
+
+const journeyOptions = (cards: CardItem[], intimacyPercent = 50) => ({
+  cards,
+  actorIndex: 0 as const,
+  outfits,
+  usedCardIds: [] as string[],
+  levels: ['gentle', 'intimate', 'passionate'] as CardItem['level'][],
+  intimacyPercent,
+  config: DEFAULT_PROGRESSION_CONFIG,
+});
+
+test('a lighter card is one star lower, of the same type first, and never a played one', () => {
+  const open = makeCard('open', 'dare', 4);
+  const cards = [open, makeCard('d3', 'dare', 3), makeCard('d2', 'dare', 2), makeCard('t3', 'truth', 3), makeCard('d5', 'dare', 5)];
+  assert.equal(selectLighterJourneyCard(journeyOptions(cards), open).card?.id, 'd3');
+  // No 3★ Dare left: the next lower Dare, even when the band would not draw it.
+  const played = { ...journeyOptions(cards, 95), usedCardIds: ['open', 'd3'] };
+  const lighter = selectLighterJourneyCard(played, open);
+  assert.equal(lighter.card?.id, 'd2');
+  assert.deepEqual(lighter.nextUsedCardIds, ['open', 'd3', 'd2']);
+  // Only a Truth is left below it.
+  assert.equal(selectLighterJourneyCard({ ...played, usedCardIds: ['d3', 'd2'] }, open).card?.id, 't3');
+  // Nothing lighter at all: the card stays and nothing changes.
+  const none = selectLighterJourneyCard({ ...played, usedCardIds: ['d3', 'd2', 't3'] }, open);
+  assert.equal(none.card, null);
+  assert.equal(none.errorCode, 'no_cards');
+  assert.deepEqual(none.nextUsedCardIds, ['d3', 'd2', 't3']);
+  assert.equal(selectLighterJourneyCard(journeyOptions(cards), makeCard('one', 'dare', 1)).card, null);
+});
+
+test('a lighter card still respects turn, outfits and difficulty limits', () => {
+  const open = makeCard('open', 'dare', 4);
+  const cards = [open, makeCard('hers', 'dare', 3, 'female'), makeCard('his', 'dare', 2, 'male')];
+  assert.equal(selectLighterJourneyCard(journeyOptions(cards), open).card?.id, 'his');
+});
+
+test('a lighter card never takes off a garment', () => {
+  const open = makeCard('open', 'dare', 4);
+  const undress: CardItem = { ...makeCard('undress', 'dare', 3), clothingEffect: { kind: 'remove_garment', target: 'self' } };
+  const dressed = { ...journeyOptions([open, undress, makeCard('plain', 'dare', 2)], 45), outfits: dressedOutfits() };
+  for (let index = 0; index < 20; index += 1) {
+    assert.equal(selectLighterJourneyCard(dressed, open).card?.id, 'plain');
+  }
+  assert.equal(selectLighterJourneyCard({ ...dressed, cards: [open, undress] }, open).card, null);
+});
+
+test('the double turn doubles card and clothing points, and 100% stays the limit', () => {
+  const card = makeCard('double', 'dare', 3);
+  const single = calculateCompletedCardIntimacy(40, card, DEFAULT_PROGRESSION_CONFIG, true);
+  const double = calculateCompletedCardIntimacy(40, card, DEFAULT_PROGRESSION_CONFIG, true, 2);
+  assert.equal(double.totalApplied, single.totalApplied * 2);
+  assert.equal(double.baseApplied, single.baseApplied * 2);
+  assert.equal(calculateCompletedCardIntimacy(95, card, DEFAULT_PROGRESSION_CONFIG, true, 2).nextPercent, 100);
+});
+
+test('an event pair offers two different cards and only the kept one counts as played', () => {
+  const cards = [makeCard('a', 'dare', 2), makeCard('b', 'dare', 2), makeCard('c', 'truth', 2)];
+  for (let index = 0; index < 20; index += 1) {
+    const pair = selectJourneyPair({ ...journeyOptions(cards), usedCardIds: ['z'] });
+    assert.ok(pair);
+    const [first, second] = pair.options;
+    assert.notEqual(first.card.id, second.card.id);
+    assert.deepEqual(first.used, ['z', first.card.id]);
+    assert.deepEqual(second.used, ['z', second.card.id]);
+  }
+  // One card left: there is nothing to choose between.
+  assert.equal(selectJourneyPair(journeyOptions([cards[0]])), null);
+});
+
+const luxuryOptions = (cards: CardItem[], luxuryPercent = 30) => ({
+  cards,
+  actorIndex: 0 as const,
+  outfits,
+  usedCardIds: [] as string[],
+  luxuryPercent,
+  config: DEFAULT_LUXURY_PROGRESSION_CONFIG,
+});
+
+const familyCard = (id: string, family: 'oral' | 'blowjob' | 'handjob', stars: PositionDifficultyStars, recipient: 'male' | 'female' | 'both' = 'both'): CardItem => ({
+  ...makePositionCard(id, stars),
+  position: { family, recipient, turnAudience: recipient, orderGroup: family === 'oral' ? 1 : family === 'blowjob' ? 2 : 3, rarity: 'luxury', difficultyStars: stars },
+});
+
+test('a Position pair prefers two groups, never repeats a card and never becomes the last choice', () => {
+  const cards = [
+    familyCard('o1', 'oral', 7), familyCard('o2', 'oral', 7),
+    familyCard('h1', 'handjob', 7), familyCard('b1', 'blowjob', 7),
+    makePositionCard('final', 10),
+  ];
+  let differentGroups = 0;
+  for (let index = 0; index < 200; index += 1) {
+    const pair = selectPositionPair(luxuryOptions(cards, 90));
+    assert.ok(pair);
+    const [first, second] = pair.options;
+    assert.notEqual(first.card.id, second.card.id);
+    assert.ok(pair.options.every((option) => option.card.position?.family !== 'have_sex'));
+    assert.deepEqual(second.used, [second.card.id]);
+    if (first.card.position?.family !== second.card.position?.family) differentGroups += 1;
+  }
+  assert.ok(differentGroups > 150, `only ${differentGroups} of 200 pairs mixed the groups`);
+  assert.equal(selectPositionPair(luxuryOptions(cards, 100)), null);
+  assert.equal(selectPositionPair(luxuryOptions([cards[0]])), null);
+});
+
+test('a chosen group only draws from that group, and excluded cards never come back', () => {
+  const cards = [familyCard('o1', 'oral', 6), familyCard('h1', 'handjob', 8), familyCard('h2', 'handjob', 9)];
+  for (let index = 0; index < 30; index += 1) {
+    const drawn = selectLuxuryPositionCard({ ...luxuryOptions(cards), familyKey: 'handjob', skipFinal: true });
+    assert.equal(drawn.card?.position?.family, 'handjob');
+  }
+  const rerolled = selectLuxuryPositionCard({ ...luxuryOptions(cards), usedCardIds: ['o1', 'h1', 'h2'], excludedCardIds: ['h1'], skipFinal: true });
+  assert.notEqual(rerolled.card?.id, 'h1');
+  assert.ok(rerolled.card);
+});
+
+test('only groups with an unplayed card for this turn can be bought', () => {
+  const cards = [
+    familyCard('o1', 'oral', 6), familyCard('o2', 'oral', 7),
+    familyCard('b1', 'blowjob', 7, 'female'),
+    familyCard('h1', 'handjob', 8),
+    makePositionCard('final', 10),
+  ];
+  const options = getPositionFamilyOptions({ ...luxuryOptions(cards), usedCardIds: ['h1'] });
+  assert.deepEqual(options.map((option) => [option.key, option.count]), [['oral', 2]]);
+  assert.deepEqual(
+    getPositionFamilyOptions({ ...luxuryOptions(cards), actorIndex: 1 }).map((option) => option.key),
+    ['oral', 'blowjob', 'handjob'],
+  );
+  assert.deepEqual(getPositionFamilyOptions({ ...luxuryOptions(cards), outfits: dressedOutfits() }), []);
+});
+
+test('a paid draw at 80–99% never rolls the last choice', () => {
+  const cards = [familyCard('o1', 'oral', 9), makePositionCard('final', 10)];
+  const always = { ...luxuryOptions(cards, 90), random: () => 0 };
+  assert.ok(selectLuxuryPositionCard(always).finalCandidates);
+  const paid = selectLuxuryPositionCard({ ...always, skipFinal: true });
+  assert.equal(paid.card?.id, 'o1');
+  assert.equal(paid.finalCandidates, undefined);
+  assert.equal(paid.probabilities.finalCardChance, 0);
 });

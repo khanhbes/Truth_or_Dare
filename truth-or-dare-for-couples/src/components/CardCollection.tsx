@@ -42,6 +42,7 @@ import {
   PositionDifficultyStars,
 } from '../types';
 import { soundEngine } from '../utils/audio';
+import { DEFAULT_CARD_TIMER_SECONDS, resolveCardTimerSeconds } from '../utils/cardTimer';
 import { dialogPanelMotion } from '../utils/motionTokens';
 import { GameCard } from './GameCard';
 import { CardBack } from './game/CardBack';
@@ -120,7 +121,6 @@ type StageSelection = 'any' | OutfitStage;
 type CardTimerMode = 'inherit' | 'disabled' | 'custom';
 
 const CARD_TIMER_PRESETS = [10, 15, 30, 45, 60] as const;
-const DEFAULT_CARD_TIMER_SECONDS = 60;
 const MAX_CARD_TIMER_SECONDS = 3600;
 
 /**
@@ -440,6 +440,13 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
   const [progressionTouched, setProgressionTouched] = useState(false);
   const [positionTouched, setPositionTouched] = useState(false);
 
+  const inheritedTimerSeconds = resolveCardTimerSeconds({
+    type: customDeck === 'position' ? 'dare' : customType,
+    deck: customDeck,
+    position: customDeck === 'position'
+      ? { family: customPositionFamily, difficultyStars: regularPositionStars(customStars) }
+      : null,
+  });
   const parsedCustomTimerSeconds = Number(customTimerSeconds);
   const hasValidCustomTimer = customTimerMode !== 'custom'
     || (
@@ -1997,13 +2004,13 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       <div>
                         <p id="card-timer-label" className="text-xs font-semibold text-neutral-100">Thời gian đếm ngược</p>
                         <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">
-                          Áp dụng cho cả Sự thật, Hành động và bài Tư thế.
+                          Mặc định: Thử thách 60 giây, Tư thế gợi ý 90–120 giây theo sao, Sự thật không đếm.
                         </p>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-labelledby="card-timer-label">
                       {([
-                        ['inherit', 'Mặc định 60s'],
+                        ['inherit', inheritedTimerSeconds === null ? 'Mặc định: không đếm' : `Mặc định ${inheritedTimerSeconds}s`],
                         ['disabled', 'Không đếm'],
                         ['custom', 'Thời gian riêng'],
                       ] as const).map(([mode, label]) => (

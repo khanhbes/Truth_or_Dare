@@ -9,8 +9,8 @@ const press = (selector: string): boolean => {
 };
 
 /**
- * Space or Enter does the main action, S skips, R rerolls, P pauses. Buttons
- * that have the focus keep their own Space and Enter.
+ * Space or Enter does the main action, S skips, R rerolls, Z undoes, P pauses.
+ * Buttons that have the focus keep their own Space and Enter. (H hides: see QuickHide.)
  */
 export const useTableShortcuts = (enabled: boolean, onPause: () => void) => {
   useEffect(() => {
@@ -31,6 +31,7 @@ export const useTableShortcuts = (enabled: boolean, onPause: () => void) => {
         handled = press('[data-main-action]');
       } else if (key === 's') handled = press('[data-action="skip"]');
       else if (key === 'r') handled = press('[data-action="reroll"]');
+      else if (key === 'z') handled = press('[data-action="undo"]');
       else if (key === 'p') {
         onPause();
         handled = true;

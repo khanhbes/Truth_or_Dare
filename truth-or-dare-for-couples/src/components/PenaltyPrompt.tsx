@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { ArrowLeft, Shirt, ShieldCheck, SkipForward, X } from 'lucide-react';
+import { ArrowLeft, Feather, Shirt, ShieldCheck, SkipForward, X } from 'lucide-react';
 import { CardType } from '../types';
 import { dialogPanelMotion } from '../utils/motionTokens';
 import { useDialogFocus } from './useDialogFocus';
@@ -13,13 +13,16 @@ interface PenaltyPromptProps {
   canRemoveGarment: boolean;
   /** Shown instead of the garment option when the clothing penalty is temporarily locked. */
   lockedReason?: string;
+  /** The player still has the free swap for an easier card. */
+  canChooseLighter: boolean;
   onReturn: () => void;
   onChooseGarment: () => void;
+  onChooseLighter: () => void;
   onContinueWithoutPenalty: () => void;
 }
 
-// Saying no must be as easy as saying yes: both options share one style and size.
-const OPTION_BUTTON = 'flex min-h-[5.75rem] w-full flex-col items-center justify-center gap-1 rounded-2xl border border-white/15 bg-white/[0.05] px-3 py-3 text-center transition-colors hover:border-amber-200/60 hover:bg-amber-200/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300';
+// Saying no must be as easy as saying yes: all options share one style and size.
+const OPTION_BUTTON = 'flex min-h-[5.75rem] w-full flex-col items-center gap-1 rounded-2xl border border-white/15 bg-white/[0.05] px-3 py-3 text-center transition-colors hover:border-amber-200/60 hover:bg-amber-200/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300';
 
 export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
   playerName,
@@ -28,8 +31,10 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
   penaltyEnabled,
   canRemoveGarment,
   lockedReason,
+  canChooseLighter,
   onReturn,
   onChooseGarment,
+  onChooseLighter,
   onContinueWithoutPenalty,
 }) => {
   const firstOptionRef = useRef<HTMLButtonElement>(null);
@@ -67,7 +72,7 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
         ref={dialogRef}
         tabIndex={-1}
         {...dialogPanelMotion(Boolean(shouldReduceMotion))}
-        className="relative max-h-[calc(100svh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl border border-rose-400/40 bg-[#160e12]/98 p-5 text-center text-white shadow-[0_26px_80px_rgba(0,0,0,0.75)] sm:p-6"
+        className={`relative max-h-[calc(100svh-2rem)] w-full overflow-y-auto rounded-3xl border border-rose-400/40 bg-[#160e12]/98 p-5 text-center text-white shadow-[0_26px_80px_rgba(0,0,0,0.75)] sm:p-6 ${canChooseGarment && canChooseLighter ? 'max-w-lg' : 'max-w-md'}`}
       >
         <button
           type="button"
@@ -88,7 +93,7 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
           {reason}
         </p>
 
-        <div className={`mt-5 grid gap-2.5 ${canChooseGarment ? 'grid-cols-2' : ''}`}>
+        <div className={`mt-5 grid gap-2.5 ${canChooseGarment && canChooseLighter ? 'grid-cols-2 sm:grid-cols-3' : canChooseGarment || canChooseLighter ? 'grid-cols-2' : ''}`}>
           <button
             ref={firstOptionRef}
             type="button"
@@ -110,6 +115,18 @@ export const PenaltyPrompt: React.FC<PenaltyPromptProps> = ({
               <Shirt className="h-5 w-5 text-rose-200" aria-hidden="true" />
               <span className="text-sm font-bold">Bỏ một món đồ</span>
               <span className="text-xs text-neutral-300">Chọn món rồi chuyển lượt</span>
+            </button>
+          )}
+          {canChooseLighter && (
+            <button
+              type="button"
+              data-action="penalty-lighter"
+              onClick={() => onChooseLighter()}
+              className={`${OPTION_BUTTON} ${canChooseGarment ? 'max-sm:col-span-2' : ''}`}
+            >
+              <Feather className="h-5 w-5 text-emerald-200" aria-hidden="true" />
+              <span className="text-sm font-bold">Lá nhẹ hơn</span>
+              <span className="text-xs text-neutral-300">Đổi miễn phí, 1 lần mỗi ván</span>
             </button>
           )}
         </div>

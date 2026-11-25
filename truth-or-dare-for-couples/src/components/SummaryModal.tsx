@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Heart, RotateCcw, X, CheckCircle2, Shirt, Star } from 'lucide-react';
+import { BookHeart, Heart, RotateCcw, X, CheckCircle2, Shirt, Star } from 'lucide-react';
 import { CardResolutionEvent, ClothingRemovalEvent, GameEndReason, IntimacyEvent, JourneyPhase, OutfitState, Player, PlayerRewardState, PositionSessionStats, RewardEvent } from '../types';
 import { getPresentGarmentSlots } from '../utils/wardrobe';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -27,6 +27,7 @@ interface SummaryModalProps {
   onHome?: () => void;
   terminal?: boolean;
   endReason?: GameEndReason | null;
+  journalSaved?: boolean;
 }
 
 const ENDING_COPY: Record<GameEndReason, string> = {
@@ -61,12 +62,13 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   cardResolutionEvents,
   journeyPhase,
   playerRewards,
-  rewardEvents,
+  rewardEvents = [],
   onRestart,
   onClose,
   onHome,
   terminal = false,
   endReason,
+  journalSaved = false,
 }) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -92,6 +94,19 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
     const state = outfitStates?.[index];
     return state ? sum + Math.max(0, getInitialGarmentCount(state) - getPresentGarmentSlots(state).length) : sum;
   }, 0);
+
+  // A purchase from the shared wallet may be paid by both: one purchase, two events.
+  const purchases = (kind: RewardEvent['kind']): number =>
+    new Set(rewardEvents.filter((event) => event.kind === kind).map((event) => event.timestamp)).size;
+  const sharedSpending = [
+    ['đổi lá Tư thế', purchases('position_reroll')],
+    ['rút 2 chọn 1', purchases('position_pair')],
+    ['chọn nhóm', purchases('position_family')],
+    ['lật lá cuối', purchases('final_card_flips')],
+  ].flatMap(([label, count]) => (Number(count) > 0 ? [`${label} ${count} lần`] : []));
+  const eventStars = rewardEvents
+    .filter((event) => event.kind === 'event_stars' && event.playerIndex === 0)
+    .reduce((sum, event) => sum + event.amount, 0);
 
   const renderOutfitSummary = (playerIndex: 0 | 1) => {
     const outfitState = outfitStates?.[playerIndex];
@@ -129,7 +144,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
       <div className="mt-3 border-t border-white/10 pt-3 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:pt-2">
         <div className="flex items-center gap-1.5 text-sm text-neutral-200">
           <Star className="h-4 w-4 shrink-0 fill-amber-300/20 text-amber-300" aria-hidden="true" />
-          <span>Kiếm <strong className="text-amber-200">{reward.totalStarsEarned}★</strong> · <span className="whitespace-nowrap">còn <strong className="text-amber-200">{reward.starBalance}★</strong></span></span>
+          <span>Kiếm <strong className="text-amber-200">{reward.totalStarsEarned}★</strong>, <span className="whitespace-nowrap">còn <strong className="text-amber-200">{reward.starBalance}★</strong></span></span>
         </div>
         {extras.length > 0 && <p className="mt-1 text-xs text-neutral-300">Đã {extras.join(', ')}</p>}
       </div>
@@ -155,7 +170,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
         ref={panelRef}
         tabIndex={-1}
         {...dialogPanelMotion(Boolean(shouldReduceMotion))}
-        className="relative max-h-[calc(100svh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-amber-300/45 bg-[#1c0c13] p-5 text-center text-white shadow-2xl sm:p-7 [@media(max-height:760px)]:py-4"
+        className="relative flex max-h-[calc(100svh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-amber-300/45 bg-[#1c0c13] text-center text-white shadow-2xl"
       >
         {!terminal && (
           <button
@@ -163,80 +178,93 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Đóng thống kê"
-            className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full text-neutral-300 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+            className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full text-neutral-300 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
 
-        <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full border border-amber-300/50 bg-gradient-to-tr from-rose-500/30 to-amber-500/30 [@media(max-height:760px)]:hidden">
-          <Heart className="h-7 w-7 fill-rose-300/60 text-rose-200" aria-hidden="true" />
-        </div>
-
-        <h3 ref={titleRef} tabIndex={-1} id="summary-title" className="px-8 font-serif-romantic text-2xl font-bold text-gold-gradient focus:outline-none sm:text-3xl">
-          {terminal ? 'Tổng kết cuộc chơi' : 'Thống kê ván này'}
-        </h3>
-        <p id="summary-description" className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-rose-100">
-          {terminal ? ENDING_COPY[endReason ?? 'manual'] : 'Chặng đường hai bạn đã đi cùng nhau.'}
-        </p>
-
-        <div className="mt-4 space-y-3 rounded-2xl border border-rose-400/30 bg-black/35 p-4 [@media(max-height:760px)]:mt-3 [@media(max-height:760px)]:space-y-2 [@media(max-height:760px)]:p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-rose-500/[0.1] p-2">
-              <div className="text-sm text-rose-100">Tim Hồng</div>
-              <div className="font-serif-romantic text-2xl font-bold tabular-nums text-rose-100">{intimacyScore}%</div>
-            </div>
-            <div className="rounded-xl bg-violet-400/[0.1] p-2">
-              <div className="text-sm text-violet-100">Tim Luxury</div>
-              <div className="font-serif-romantic text-2xl font-bold tabular-nums text-violet-100">{luxuryIntimacyPercent}%</div>
-            </div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain px-5 pb-3 pt-5 sm:px-7 sm:pt-7 [@media(max-height:760px)]:pt-4">
+          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full border border-amber-300/50 bg-gradient-to-tr from-rose-500/30 to-amber-500/30 [@media(max-height:760px)]:hidden">
+            <Heart className="h-7 w-7 fill-rose-300/60 text-rose-200" aria-hidden="true" />
           </div>
-          <div className="inline-block rounded-full border border-rose-400/45 bg-rose-950/80 px-3 py-1 text-sm font-medium text-rose-100">
-            {intimacyBadge}
-          </div>
-          <dl className="grid grid-cols-3 gap-1.5 text-center">
-            {([
-              ['Lá hoàn thành', totalCompleted, 'bg-white/[0.06]'],
-              ['Món đã cởi', totalRemoved, 'bg-rose-500/[0.1]'],
-              ['Tư thế đã làm', positionSessionStats.completed, 'bg-violet-500/[0.1]'],
-            ] as const).map(([label, value, tone]) => (
-              <div key={label} className={`rounded-lg px-1 py-2 ${tone}`}>
-                <dt className="text-xs text-neutral-200">{label}</dt>
-                <dd className="mt-0.5 text-lg font-bold tabular-nums text-white">{value}</dd>
+
+          <h3 ref={titleRef} tabIndex={-1} id="summary-title" className="px-8 font-serif-romantic text-2xl font-bold text-gold-gradient focus:outline-none sm:text-3xl">
+            {terminal ? 'Tổng kết cuộc chơi' : 'Thống kê ván này'}
+          </h3>
+          <p id="summary-description" className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-rose-100">
+            {terminal ? ENDING_COPY[endReason ?? 'manual'] : 'Chặng đường hai bạn đã đi cùng nhau.'}
+            {journalSaved && (
+              <span className="mt-1 flex items-center justify-center gap-1.5 font-semibold text-emerald-200">
+                <BookHeart className="h-4 w-4 shrink-0" aria-hidden="true" /> Đã lưu vào nhật ký.
+              </span>
+            )}
+          </p>
+
+          <div className="mt-4 space-y-3 rounded-2xl border border-rose-400/30 bg-black/35 p-4 [@media(max-height:760px)]:mt-3 [@media(max-height:760px)]:space-y-2 [@media(max-height:760px)]:p-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-rose-500/[0.1] p-2">
+                <div className="text-sm text-rose-100">Tim Hồng</div>
+                <div className="font-serif-romantic text-2xl font-bold tabular-nums text-rose-100">{intimacyScore}%</div>
               </div>
-            ))}
-          </dl>
-          {swapCount > 0 && (
-            <p className="text-sm text-neutral-200">Hai bạn đã đổi đồ cho nhau {swapCount} lần.</p>
-          )}
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-3 text-left">
-          {([0, 1] as const).map((index) => {
-            const player = index === 0 ? player1 : player2;
-            return (
-              <div key={index} className={`min-w-0 rounded-2xl border bg-black/30 p-3.5 ${index === 0 ? 'border-rose-400/30' : 'border-amber-400/30'}`}>
-                <div className="mb-1 truncate text-lg">{player.avatar} {player.name}</div>
-                <div className="flex items-center gap-1.5 text-sm text-neutral-200">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
-                  <span className="text-balance">{player.completedCount} lá hoàn thành</span>
+              <div className="rounded-xl bg-violet-400/[0.1] p-2">
+                <div className="text-sm text-violet-100">Tim Luxury</div>
+                <div className="font-serif-romantic text-2xl font-bold tabular-nums text-violet-100">{luxuryIntimacyPercent}%</div>
+              </div>
+            </div>
+            <div className="inline-block rounded-full border border-rose-400/45 bg-rose-950/80 px-3 py-1 text-sm font-medium text-rose-100">
+              {intimacyBadge}
+            </div>
+            <dl className="grid grid-cols-3 gap-1.5 text-center">
+              {([
+                ['Lá hoàn thành', totalCompleted, 'bg-white/[0.06]'],
+                ['Món đã cởi', totalRemoved, 'bg-rose-500/[0.1]'],
+                ['Tư thế đã làm', positionSessionStats.completed, 'bg-violet-500/[0.1]'],
+              ] as const).map(([label, value, tone]) => (
+                <div key={label} className={`rounded-lg px-1 py-2 ${tone}`}>
+                  <dt className="text-xs text-neutral-200">{label}</dt>
+                  <dd className="mt-0.5 text-lg font-bold tabular-nums text-white">{value}</dd>
                 </div>
-                {renderRewardSummary(index)}
-                {renderOutfitSummary(index)}
-              </div>
-            );
-          })}
-        </div>
-
-        {favoritesCount > 0 && (
-          <div className="mt-3 flex items-center justify-center gap-2 text-sm text-neutral-200">
-            <Heart className="h-4 w-4 fill-rose-500 text-rose-500" aria-hidden="true" />
-            <span>{favoritesCount} lá trong mục yêu thích</span>
+              ))}
+            </dl>
+            {swapCount > 0 && (
+              <p className="text-sm text-neutral-200">Hai bạn đã đổi đồ cho nhau {swapCount} lần.</p>
+            )}
+            {eventStars > 0 && (
+              <p className="text-sm text-neutral-200">Đoán trùng ý nhau: <strong className="text-amber-200">+{eventStars}★</strong> mỗi người.</p>
+            )}
+            {sharedSpending.length > 0 && (
+              <p className="text-sm text-neutral-200">Ví chung: {sharedSpending.join(', ')}.</p>
+            )}
           </div>
-        )}
 
+          <div className="mt-3 grid grid-cols-2 gap-3 text-left">
+            {([0, 1] as const).map((index) => {
+              const player = index === 0 ? player1 : player2;
+              return (
+                <div key={index} className={`min-w-0 rounded-2xl border bg-black/30 p-3.5 ${index === 0 ? 'border-rose-400/30' : 'border-amber-400/30'}`}>
+                  <div className="mb-1 truncate text-lg">{player.avatar} {player.name}</div>
+                  <div className="flex items-center gap-1.5 text-sm text-neutral-200">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                    <span className="text-balance">{player.completedCount} lá hoàn thành</span>
+                  </div>
+                  {renderRewardSummary(index)}
+                  {renderOutfitSummary(index)}
+                </div>
+              );
+            })}
+          </div>
+
+          {favoritesCount > 0 && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-sm text-neutral-200">
+              <Heart className="h-4 w-4 fill-rose-500 text-rose-500" aria-hidden="true" />
+              <span>{favoritesCount} lá trong mục yêu thích</span>
+            </div>
+          )}
+
+        </div>
         {/* Actions: while a game is running, going back to it is the main choice. */}
-        <div className="mt-5 flex flex-col gap-3 sm:flex-row-reverse [@media(max-height:760px)]:mt-3">
+        <div className="flex shrink-0 flex-col gap-3 border-t border-white/10 px-5 pb-5 pt-4 sm:flex-row-reverse sm:px-7 [@media(max-height:760px)]:pb-4 [@media(max-height:760px)]:pt-3">
           {terminal ? (
             <>
               <button

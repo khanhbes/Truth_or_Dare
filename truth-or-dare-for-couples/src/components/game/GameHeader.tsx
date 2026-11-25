@@ -4,15 +4,20 @@ import {
   BarChart3,
   BookOpen,
   Ellipsis,
+  EyeOff,
   Flag,
   Flame,
   Heart,
   HelpCircle,
   Info,
+  Music,
   Pause,
   ShieldCheck,
+  Vibrate,
+  VibrateOff,
   Volume2,
   VolumeX,
+  type LucideIcon,
 } from 'lucide-react';
 import type { JourneyPhase, Player, PlayerIndex } from '../../types';
 import {
@@ -38,17 +43,37 @@ interface GameHeaderProps {
   drawProbabilities: JourneyDrawProbabilities;
   luxuryProbabilities: LuxuryDrawProbabilities | null;
   difficultyBoostActive: boolean;
+  /** The next completed card counts double. */
+  doubleNext: boolean;
   locked: boolean;
   isMuted: boolean;
+  isMusicOn: boolean;
+  /** null: this device does not vibrate. */
+  hapticsOn: boolean | null;
   coupleName?: string;
   reduceMotion: boolean;
   onToggleMute: () => void;
+  onToggleMusic: () => void;
+  onToggleHaptics: () => void;
   onOpenRules: () => void;
   onOpenCollection: () => void;
   onOpenSummary: () => void;
   onOpenAccount?: () => void;
+  /** One tap and nothing of the game is visible any more. */
+  onHide: () => void;
   onPause: () => void;
   onEnd: () => void;
+}
+
+interface MenuItem {
+  label: string;
+  icon: LucideIcon;
+  tone: string;
+  /** Also there as a button on larger screens. */
+  phoneOnly?: boolean;
+  /** Sound switches work while the cards are moving. */
+  always?: boolean;
+  onSelect: () => void;
 }
 
 const chance = (value: number) => `${Math.round(value * 100)}%`;
@@ -92,15 +117,21 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   drawProbabilities,
   luxuryProbabilities,
   difficultyBoostActive,
+  doubleNext,
   locked,
   isMuted,
+  isMusicOn,
+  hapticsOn,
   coupleName,
   reduceMotion,
   onToggleMute,
+  onToggleMusic,
+  onToggleHaptics,
   onOpenRules,
   onOpenCollection,
   onOpenSummary,
   onOpenAccount,
+  onHide,
   onPause,
   onEnd,
 }) => {
@@ -136,14 +167,19 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
       ? 'đã đầy'
       : percent >= 100 ? 'cởi nốt đồ để mở Bộ Tư thế' : 'đầy thì mở Bộ Tư thế';
   const finalChance = luxuryProbabilities?.finalCardChance ?? 0;
-  const menuItems = [
-    { label: 'Tạm dừng', icon: Pause, tone: 'text-sky-200', onSelect: onPause },
+  const menuItems: MenuItem[] = [
+    { label: 'Tạm dừng', icon: Pause, tone: 'text-sky-200', phoneOnly: true, onSelect: onPause },
+    { label: isMusicOn ? 'Tắt nhạc nền' : 'Bật nhạc nền', icon: Music, tone: isMusicOn ? 'text-amber-200' : 'text-neutral-300', phoneOnly: true, always: true, onSelect: onToggleMusic },
+    ...(hapticsOn === null
+      ? []
+      : [{ label: hapticsOn ? 'Tắt rung' : 'Bật rung', icon: hapticsOn ? Vibrate : VibrateOff, tone: hapticsOn ? 'text-amber-200' : 'text-neutral-300', always: true, onSelect: onToggleHaptics }]),
+    { label: 'Cách chơi', icon: HelpCircle, tone: 'text-rose-200', phoneOnly: true, onSelect: onOpenRules },
     { label: 'Bộ sưu tập', icon: BookOpen, tone: 'text-amber-200', onSelect: onOpenCollection },
     { label: 'Thống kê ván', icon: BarChart3, tone: 'text-rose-200', onSelect: onOpenSummary },
     ...(onOpenAccount
       ? [{ label: coupleName ? `Tài khoản · ${coupleName}` : 'Tài khoản', icon: ShieldCheck, tone: 'text-emerald-300', onSelect: onOpenAccount }]
       : []),
-    { label: 'Kết thúc ván', icon: Flag, tone: 'text-neutral-200', onSelect: onEnd },
+    { label: 'Kết thúc ván', icon: Flag, tone: 'text-neutral-200', phoneOnly: true, onSelect: onEnd },
   ];
 
   return (
@@ -189,6 +225,11 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
                 </motion.span>
               )}
             </AnimatePresence>
+            {doubleNext && standardOdds && (
+              <span className="mr-2 rounded-full bg-amber-300/20 px-2 py-0.5 text-xs font-bold text-amber-100" title="Lá hoàn thành kế tiếp cho gấp đôi % Tim Hồng">
+                ×2 lá kế
+              </span>
+            )}
             <strong className={`text-lg font-bold tabular-nums ${standard ? 'text-rose-100' : 'text-[#f1d6ff]'}`}>{percent}%</strong>
           </span>
         </div>
@@ -289,37 +330,46 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
         <button type="button" onClick={onToggleMute} aria-label={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'} data-tip={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'} className={ICON_BUTTON}>
           {isMuted ? <VolumeX className="h-4 w-4" aria-hidden="true" /> : <Volume2 className="h-4 w-4 text-amber-200" aria-hidden="true" />}
         </button>
-        <button type="button" onClick={onOpenRules} disabled={locked} aria-label="Cách chơi và luật phạt" data-tip="Cách chơi" className={ICON_BUTTON}>
+        <button type="button" onClick={onToggleMusic} aria-pressed={isMusicOn} aria-label="Nhạc nền" data-tip={isMusicOn ? 'Tắt nhạc nền' : 'Bật nhạc nền'} className={`${ICON_BUTTON} max-sm:hidden`}>
+          <Music className={`h-4 w-4 ${isMusicOn ? 'text-amber-200' : 'text-neutral-400'}`} aria-hidden="true" />
+        </button>
+        <button type="button" onClick={onOpenRules} disabled={locked} aria-label="Cách chơi và luật phạt" data-tip="Cách chơi" className={`${ICON_BUTTON} max-sm:hidden`}>
           <HelpCircle className="h-4 w-4 text-rose-200" aria-hidden="true" />
         </button>
-        <button type="button" onClick={onOpenCollection} disabled={locked} aria-label="Mở bộ sưu tập" data-tip="Bộ sưu tập" className={`${ICON_BUTTON} max-sm:hidden`}>
+        <button type="button" onClick={onOpenCollection} disabled={locked} aria-label="Mở bộ sưu tập" data-tip="Bộ sưu tập" className={`${ICON_BUTTON} max-xl:hidden`}>
           <BookOpen className="h-4 w-4 text-amber-200" aria-hidden="true" />
         </button>
-        <button type="button" onClick={onOpenSummary} disabled={locked} aria-label="Mở thống kê ván" data-tip="Thống kê" className={`${ICON_BUTTON} max-sm:hidden`}>
+        <button type="button" onClick={onOpenSummary} disabled={locked} aria-label="Mở thống kê ván" data-tip="Thống kê" className={`${ICON_BUTTON} max-xl:hidden`}>
           <BarChart3 className="h-4 w-4 text-rose-200" aria-hidden="true" />
         </button>
         {onOpenAccount && (
-          <button type="button" onClick={onOpenAccount} disabled={locked} aria-label="Tài khoản và đồng bộ" data-tip={coupleName ? `Tài khoản: ${coupleName}` : 'Tài khoản'} className={`${ICON_BUTTON} max-sm:hidden`}>
+          <button type="button" onClick={onOpenAccount} disabled={locked} aria-label="Tài khoản và đồng bộ" data-tip={coupleName ? `Tài khoản: ${coupleName}` : 'Tài khoản'} className={`${ICON_BUTTON} max-xl:hidden`}>
             <ShieldCheck className="h-4 w-4 text-emerald-300" aria-hidden="true" />
           </button>
         )}
         <span className="mx-0.5 hidden h-6 w-px bg-white/12 sm:block" aria-hidden="true" />
-        <button type="button" onClick={onPause} disabled={locked} aria-label="Tạm dừng" data-tip="Tạm dừng · P" className={`${ICON_BUTTON} max-sm:hidden`}>
-          <Pause className="h-4 w-4 text-sky-200" aria-hidden="true" />
-        </button>
+        <span data-guide="safety" className="flex items-center gap-[.35rem]">
+          <button type="button" data-action="hide" onClick={onHide} aria-label="Ẩn nhanh" data-tip="Ẩn nhanh · H" className={ICON_BUTTON}>
+            <EyeOff className="h-4 w-4 text-emerald-200" aria-hidden="true" />
+          </button>
+          <button type="button" onClick={onPause} disabled={locked} aria-label="Tạm dừng" data-tip="Tạm dừng · P" className={`${ICON_BUTTON} max-sm:hidden`}>
+            <Pause className="h-4 w-4 text-sky-200" aria-hidden="true" />
+          </button>
+        </span>
         <button type="button" onClick={onEnd} disabled={locked} aria-label="Kết thúc ván" data-tip="Kết thúc ván" data-tip-align="end" className={`${ICON_BUTTON} max-sm:hidden hover:border-rose-400/50 hover:bg-rose-500/10`}>
           <Flag className="h-4 w-4" aria-hidden="true" />
         </button>
 
-        <div ref={menuRef} className="relative sm:hidden">
+        <div ref={menuRef} className="relative xl:hidden">
           <button
             type="button"
             onClick={() => setShowMenu((open) => !open)}
             aria-expanded={showMenu}
             aria-haspopup="menu"
-            className={`flex h-11 items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-neutral-100 ${FOCUS_RING}`}
+            aria-label="Thêm"
+            className={`flex h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-neutral-100 sm:w-11 sm:px-0 lg:h-10 lg:w-10 ${FOCUS_RING}`}
           >
-            <Ellipsis className="h-4 w-4" aria-hidden="true" /> Thêm
+            <Ellipsis className="h-4 w-4" aria-hidden="true" /> <span className="sm:hidden">Thêm</span>
           </button>
           <AnimatePresence>
             {showMenu && (
@@ -338,12 +388,12 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
                       key={item.label}
                       type="button"
                       role="menuitem"
-                      disabled={locked}
+                      disabled={locked && !item.always}
                       onClick={() => {
                         setShowMenu(false);
                         item.onSelect();
                       }}
-                      className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm text-neutral-100 hover:bg-white/[0.06] disabled:opacity-40"
+                      className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm text-neutral-100 hover:bg-white/[0.06] disabled:opacity-40 ${item.phoneOnly ? 'sm:hidden' : ''} ${FOCUS_RING}`}
                     >
                       <Icon className={`h-4 w-4 shrink-0 ${item.tone}`} aria-hidden="true" />
                       <span className="truncate">{item.label}</span>

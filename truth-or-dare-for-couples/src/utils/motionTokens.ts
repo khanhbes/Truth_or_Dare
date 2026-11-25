@@ -39,6 +39,8 @@ export const TABLE_TIMING = {
   /** The chosen last card moves to the middle and turns over. */
   finalReveal: 1050,
   holdToConfirm: 600,
+  /** How long the last turn can be taken back. */
+  undo: 5000,
   /** Clicks right after a change are ignored, so a double click never does two things. */
   actionGuard: 380,
 } as const;

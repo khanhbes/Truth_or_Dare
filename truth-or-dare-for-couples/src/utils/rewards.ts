@@ -6,6 +6,12 @@ export const DIFFICULTY_BOOST_STAR_COST = 10;
 export const FINAL_FLIP_TWO_STAR_COST = 10;
 /** Final Have Sex choice: reveal all three face-down cards. */
 export const FINAL_FLIP_THREE_STAR_COST = 20;
+/** Position deck: swap the open card for another one. */
+export const POSITION_REROLL_STAR_COST = 8;
+/** Position deck: draw two cards and keep one. */
+export const POSITION_PAIR_STAR_COST = 12;
+/** Position deck: choose the group the next card comes from. */
+export const POSITION_FAMILY_STAR_COST = 15;
 
 export const getSharedStarBalance = (
   rewards: readonly [PlayerRewardState, PlayerRewardState],
@@ -67,6 +73,19 @@ export const awardStars = (
       }
     : reward,
 ) as [PlayerRewardState, PlayerRewardState];
+
+/** Both players get the same gift (a matched answer in an event turn). */
+export const giftStars = (
+  rewards: readonly [PlayerRewardState, PlayerRewardState],
+  stars: number,
+): [PlayerRewardState, PlayerRewardState] => {
+  const amount = Math.max(0, Math.floor(stars));
+  return rewards.map((reward) => ({
+    ...reward,
+    starBalance: reward.starBalance + amount,
+    totalStarsEarned: reward.totalStarsEarned + amount,
+  })) as [PlayerRewardState, PlayerRewardState];
+};
 
 export const spendReward = (
   rewards: readonly [PlayerRewardState, PlayerRewardState],
