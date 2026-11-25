@@ -1,12 +1,35 @@
 @import "tailwindcss";
 
 @layer base {
+  /* Native controls (checkbox, select, number arrows, autofill) follow the dark page. */
+  html {
+    color-scheme: dark;
+  }
+
+  /* Large windows are read from further away (two people, one screen): everything grows together. */
+  @media (min-width: 2200px) and (min-height: 1150px) {
+    html {
+      font-size: 125%;
+    }
+  }
+
   body {
     font-family: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
+    /* Playfair's default figures are old-style: "0%" looked like "o%". */
+    font-variant-numeric: lining-nums;
   }
 
   h1, h2, h3, .font-serif-romantic, .serif-title {
     font-family: 'Playfair Display', 'Georgia', serif;
+  }
+
+  /* No single word left alone on the last line. */
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
   }
 
   button:focus-visible,
@@ -21,16 +44,16 @@
   /* ===== INPUT & TEXTAREA PLACEHOLDER EFFECTS ===== */
   input::placeholder,
   textarea::placeholder {
-    color: rgba(255, 255, 255, 0.25);
+    color: rgba(255, 255, 255, 0.6);
     font-style: italic;
-    font-weight: 300;
+    font-weight: 400;
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     letter-spacing: 0.02em;
   }
 
   input:focus::placeholder,
   textarea:focus::placeholder {
-    color: rgba(255, 107, 157, 0.4);
+    color: rgba(255, 160, 190, 0.7);
     transform: translateX(4px);
     letter-spacing: 0.06em;
   }
@@ -50,6 +73,8 @@
 
   /* ===== CUSTOM SELECT / DROPDOWN STYLING ===== */
   select {
+    /* The arrow below replaces the browser's own one. */
+    appearance: none;
     font-family: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
@@ -86,17 +111,14 @@
   }
 }
 
+/* Tailwind's own class would drop the lining figures set on the body. */
+.tabular-nums {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
 /* Custom Utilities for Elegant Dark Theme */
 .serif-title {
   font-family: 'Playfair Display', 'Georgia', serif;
-}
-
-.gold-glow {
-  box-shadow: 0 0 25px rgba(212, 175, 55, 0.3);
-}
-
-.pink-glow {
-  text-shadow: 0 0 12px rgba(255, 107, 157, 0.6);
 }
 
 .wine-gradient {
@@ -111,7 +133,7 @@
 .bokeh {
   position: absolute;
   border-radius: 50%;
-  filter: blur(60px);
+  background: radial-gradient(closest-side, rgba(var(--bokeh), 1) 26%, rgba(var(--bokeh), .5) 65%, rgba(var(--bokeh), .13) 85%, rgba(var(--bokeh), 0));
   opacity: 0.18;
   z-index: 0;
   pointer-events: none;
@@ -128,23 +150,6 @@
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
-/* Custom Utilities for Romantic Seductive Theme */
-.perspective-1000 {
-  perspective: 1000px;
-}
-
-.transform-style-3d {
-  transform-style: preserve-3d;
-}
-
-.backface-hidden {
-  backface-visibility: hidden;
-}
-
-.rotate-y-180 {
-  transform: rotateY(180deg);
-}
-
 /* Metallic Gold Text and Borders */
 .text-gold-gradient {
   background: linear-gradient(135deg, #FBF5B7 0%, #D4AF37 50%, #AA771C 100%);
@@ -153,21 +158,14 @@
 }
 
 .bg-gold-gradient {
-  background: linear-gradient(135deg, #DFBA67 0%, #C59B27 50%, #9E7412 100%);
+  background: linear-gradient(135deg, #E6C675 0%, #CFA63A 50%, #B5881F 100%);
 }
 
 .border-gold-gradient {
   border-image: linear-gradient(135deg, #EAD087, #B88E28) 1;
 }
 
-/* Glassmorphism Dark Wine Panels */
-.glass-wine {
-  background: rgba(45, 12, 19, 0.65);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(212, 175, 55, 0.2);
-}
-
+/* Glass panels */
 .glass-dark {
   background: rgba(22, 18, 20, 0.75);
   backdrop-filter: blur(16px);
@@ -227,9 +225,9 @@
 .input-shimmer::placeholder {
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.2) 0%,
-    rgba(255, 107, 157, 0.35) 50%,
-    rgba(255, 255, 255, 0.2) 100%
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 160, 190, 0.85) 50%,
+    rgba(255, 255, 255, 0.6) 100%
   );
   background-size: 200% auto;
   -webkit-background-clip: text;
@@ -240,7 +238,7 @@
 .input-shimmer:focus::placeholder {
   animation: none;
   background: none;
-  -webkit-text-fill-color: rgba(255, 107, 157, 0.4);
+  -webkit-text-fill-color: rgba(255, 160, 190, 0.7);
 }
 
 /* ===== PREMIUM SELECT WRAPPER ===== */
@@ -297,239 +295,110 @@
   transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.4s ease;
 }
 
-.game-card:hover {
+/* The card on the table cannot be clicked, so it must not lift like a button. */
+.game-card:not(.table-card-face):hover {
   transform: translateY(-4px) scale(1.02);
 }
 
-/* Always-on, slow prismatic border. It is independent from hover state. */
+/* The coloured edge is the border itself: the face fills the padding box and the
+   edge gradient fills the border box. Nothing is masked or filtered, so a card
+   can fly across the table without being painted again on every frame. */
 .game-card::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: 5;
-  border-radius: inherit;
-  padding: 2px;
+  border-radius: 14px;
   pointer-events: none;
-  background: conic-gradient(
-    from var(--card-rainbow-angle),
-    #ff6b9d,
-    #ffd6e5 12%,
-    #ffd166 27%,
-    #8ce8d5 43%,
-    #83c5ff 58%,
-    #c6a7ff 74%,
-    #ffffff 86%,
-    #ff6b9d
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.35));
-  animation: card-rainbow-drift 16s linear infinite;
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--card-accent, 255, 255, 255), 0.3),
+    inset 0 0 20px rgba(var(--card-accent, 255, 255, 255), 0.16);
+  opacity: 0.6;
 }
 
-/* Each level keeps its own visual identity. */
-.game-card.card-gentle::after {
-  background: linear-gradient(135deg, #ff4f8b, #ffd0df 48%, #ff6b9d);
-  animation: card-border-breathe 4.8s ease-in-out infinite;
+/* On the table the edge breathes slowly; only its opacity changes. */
+.table-card-face.game-card::after {
+  animation: card-edge-breathe 4.8s ease-in-out infinite;
 }
 
-.game-card.card-intimate::after {
-  background: linear-gradient(135deg, #3b82f6, #bde3ff 48%, #60a5fa);
-  animation: card-border-breathe 4.8s ease-in-out infinite;
-}
-
-/* --- GENTLE: Black card, pink border --- */
+/* Each level has one colour everywhere (badge, card, Setup, Rules): pink, amber,
+   wine red. Blue is kept for Truth. */
+/* --- GENTLE: rose --- */
 .card-gentle {
-  background: linear-gradient(180deg, #1a0810 0%, #0d0407 50%, #0a0305 100%);
-  box-shadow: 0 4px 20px rgba(255, 107, 157, 0.15), inset 0 1px 0 rgba(255, 107, 157, 0.1);
+  --card-accent: 255, 134, 179;
+  background:
+    linear-gradient(180deg, #26101a 0%, #160910 50%, #0f060a 100%) padding-box,
+    linear-gradient(135deg, #ff4f8b, #ffd0df 48%, #ff6b9d) border-box;
+  box-shadow: 0 4px 20px rgba(255, 107, 157, 0.2);
 }
 
 .card-gentle:hover {
-  box-shadow: 0 8px 35px rgba(255, 107, 157, 0.25), inset 0 1px 0 rgba(255, 107, 157, 0.15);
+  box-shadow: 0 8px 35px rgba(255, 107, 157, 0.28);
 }
 
-.card-gentle .card-icon-color {
-  color: #FF6B9D;
-}
-
-/* --- INTIMATE: Deep purple, pink icon --- */
+/* --- INTIMATE: amber --- */
 .card-intimate {
-  background: linear-gradient(180deg, #2d1854 0%, #1e1045 50%, #150a35 100%);
-  box-shadow: 0 4px 20px rgba(130, 80, 220, 0.15), inset 0 1px 0 rgba(180, 120, 255, 0.1);
+  --card-accent: 240, 192, 101;
+  background:
+    linear-gradient(180deg, #2c1d0c 0%, #1c1208 50%, #120b05 100%) padding-box,
+    linear-gradient(135deg, #f59e0b, #fde7b0 48%, #d4af37) border-box;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.18);
 }
 
 .card-intimate:hover {
-  box-shadow: 0 8px 35px rgba(130, 80, 220, 0.3), inset 0 1px 0 rgba(180, 120, 255, 0.15);
+  box-shadow: 0 8px 35px rgba(245, 158, 11, 0.26);
 }
 
-.card-intimate .card-icon-color {
-  color: #FF6B9D;
+/* --- PASSIONATE: wine red --- */
+.card-passionate {
+  --card-accent: 255, 107, 120;
+  background:
+    linear-gradient(180deg, #3a0d17 0%, #24080f 50%, #160509 100%) padding-box,
+    linear-gradient(135deg, #b91c1c, #fca5a5 48%, #7f1d1d) border-box;
+  box-shadow: 0 4px 25px rgba(220, 38, 60, 0.22);
 }
 
-/* Wave pattern overlay for intimate/passionate */
+.card-passionate:hover {
+  box-shadow: 0 8px 38px rgba(220, 38, 60, 0.3);
+}
+
+:is(.card-gentle, .card-intimate, .card-passionate) .card-icon-color {
+  color: rgb(var(--card-accent));
+}
+
+/* Wave lines for intimate/passionate, in the colour of the level */
 .card-wave-pattern::before {
   content: '';
   position: absolute;
   inset: 0;
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpath d='M0 200 Q100 180 200 200 Q300 220 400 200' fill='none' stroke='rgba(150,100,255,0.06)' stroke-width='2'/%3E%3Cpath d='M0 220 Q100 200 200 220 Q300 240 400 220' fill='none' stroke='rgba(150,100,255,0.04)' stroke-width='2'/%3E%3Cpath d='M0 240 Q100 220 200 240 Q300 260 400 240' fill='none' stroke='rgba(150,100,255,0.03)' stroke-width='2'/%3E%3C/svg%3E");
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpath d='M0 200 Q100 180 200 200 Q300 220 400 200' fill='none' stroke='rgba(255,214,150,0.06)' stroke-width='2'/%3E%3Cpath d='M0 220 Q100 200 200 220 Q300 240 400 220' fill='none' stroke='rgba(255,214,150,0.04)' stroke-width='2'/%3E%3Cpath d='M0 240 Q100 220 200 240 Q300 260 400 240' fill='none' stroke='rgba(255,214,150,0.03)' stroke-width='2'/%3E%3C/svg%3E");
   background-size: 400px 400px;
   opacity: 1;
   pointer-events: none;
   z-index: 0;
 }
 
-/* --- PASSIONATE: Warm golden background --- */
-.card-passionate {
-  background: linear-gradient(180deg, #3d2a0a 0%, #2a1d08 40%, #1f1606 100%);
-  box-shadow: 0 4px 25px rgba(212, 175, 55, 0.15);
-}
-
-.card-passionate .card-icon-color {
-  color: #FF6B9D;
+.card-passionate.card-wave-pattern::before {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpath d='M0 200 Q100 180 200 200 Q300 220 400 200' fill='none' stroke='rgba(255,140,150,0.08)' stroke-width='2'/%3E%3Cpath d='M0 220 Q100 200 200 220 Q300 240 400 220' fill='none' stroke='rgba(255,140,150,0.05)' stroke-width='2'/%3E%3Cpath d='M0 240 Q100 220 200 240 Q300 260 400 240' fill='none' stroke='rgba(255,140,150,0.04)' stroke-width='2'/%3E%3C/svg%3E");
 }
 
 /* --- POSITION DECK: midnight sapphire + champagne foil --- */
 .card-position {
+  --card-accent: 226, 194, 117;
   background:
-    radial-gradient(circle at 50% 18%, rgba(31, 79, 142, 0.34), transparent 36%),
-    linear-gradient(160deg, #111d37 0%, #070b18 52%, #03050c 100%);
+    radial-gradient(circle at 50% 18%, rgba(31, 79, 142, 0.34), transparent 36%) padding-box,
+    linear-gradient(160deg, #111d37 0%, #070b18 52%, #03050c 100%) padding-box,
+    linear-gradient(142deg, #8a6f35, #f7e7b0 16%, #b98a38 33%, #fff4d6 50%, #a3803a 67%, #f7e7b0 84%, #8a6f35) border-box;
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.5),
-    0 0 28px rgba(226, 194, 117, 0.12),
-    inset 0 1px 0 rgba(255, 244, 214, 0.12);
-}
-
-.game-card.card-position::after {
-  background: conic-gradient(
-    from var(--card-rainbow-angle),
-    #725c2d,
-    #f7e7b0,
-    #b98a38,
-    #fff4d6,
-    #725c2d
-  );
-  filter: drop-shadow(0 0 4px rgba(226, 194, 117, 0.42));
-  animation: position-foil-drift 12s linear infinite;
+    0 0 28px rgba(226, 194, 117, 0.16);
 }
 
 .card-position .card-icon-color {
   color: #e2c275;
   filter: drop-shadow(0 0 14px rgba(226, 194, 117, 0.28));
-}
-
-/* Ceremonial position draw: sapphire lacquer, champagne edge, restrained foil. */
-.luxury-deck {
-  isolation: isolate;
-  border: 0;
-  background: transparent;
-}
-
-.luxury-deck__card,
-.luxury-deck__face,
-.luxury-shuffle__card,
-.luxury-card-back {
-  background:
-    radial-gradient(circle at 50% 28%, rgba(74, 112, 177, .28), transparent 32%),
-    linear-gradient(155deg, #17294c 0%, #080d20 52%, #03050d 100%);
-  border: 2px solid rgba(226, 194, 117, .72);
-  box-shadow:
-    0 24px 65px rgba(0, 0, 0, .52),
-    0 0 24px rgba(226, 194, 117, .12),
-    inset 0 0 0 1px rgba(255, 244, 214, .12);
-}
-
-.luxury-deck__card,
-.luxury-deck__face {
-  position: absolute;
-  inset: 0;
-  display: block;
-  border-radius: 1.4rem;
-}
-
-.luxury-deck__card--left {
-  z-index: -2;
-  opacity: .42;
-  transform: translate(-8px, 8px) rotate(-4deg);
-}
-
-.luxury-deck__card--right {
-  z-index: -1;
-  opacity: .58;
-  transform: translate(7px, 4px) rotate(2.5deg);
-}
-
-.luxury-deck__face {
-  overflow: hidden;
-  padding: 13px;
-}
-
-.luxury-deck__face::after,
-.luxury-shuffle__card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(112deg, transparent 28%, rgba(255, 244, 214, .2) 46%, transparent 63%);
-  transform: translateX(-145%);
-  animation: luxury-deck-foil 4.8s ease-in-out infinite;
-}
-
-.luxury-deck__inner {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  border: 1px solid rgba(247, 231, 176, .38);
-  border-radius: 1rem;
-  padding: 18px 12px;
-  background:
-    radial-gradient(circle at center, rgba(226, 194, 117, .08), transparent 34%),
-    repeating-radial-gradient(circle at center, transparent 0 26px, rgba(247, 231, 176, .055) 27px 28px);
-}
-
-.luxury-deck__seal {
-  display: grid;
-  width: 70px;
-  height: 70px;
-  place-items: center;
-  border: 1px solid rgba(247, 231, 176, .72);
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(226, 194, 117, .2), rgba(7, 11, 24, .3) 68%);
-  color: #fff4d6;
-  font-size: 1.7rem;
-  box-shadow: 0 0 24px rgba(226, 194, 117, .18), inset 0 0 16px rgba(226, 194, 117, .1);
-}
-
-.luxury-shuffle__card {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  border-radius: 1.35rem;
-  padding: 12px;
-  transform-origin: 50% 85%;
-}
-
-.luxury-card-back {
-  overflow: hidden;
-}
-
-.luxury-unseal-button {
-  border-color: rgba(247, 231, 176, .62);
-  background: linear-gradient(135deg, rgba(226, 194, 117, .2), rgba(31, 79, 142, .2));
-  color: #fff4d6;
-  box-shadow: 0 0 22px rgba(226, 194, 117, .12);
-}
-
-.luxury-unseal-button:hover {
-  border-color: rgba(255, 244, 214, .9);
-  background: linear-gradient(135deg, rgba(226, 194, 117, .27), rgba(31, 79, 142, .28));
 }
 
 .position-content-reveal {
@@ -540,7 +409,8 @@
 .position-content-reveal::after {
   content: '';
   position: absolute;
-  inset: -12px;
+  /* No vertical bleed: inside the card's scroll area it would add scroll room. */
+  inset: 0 -12px;
   z-index: 5;
   pointer-events: none;
   background: linear-gradient(108deg, transparent 24%, rgba(255, 244, 214, .32) 48%, transparent 68%);
@@ -562,51 +432,38 @@
 
 /* --- RAREST CARD: obsidian, imperial violet, platinum and rose gold --- */
 .card-position-rare {
+  --card-accent: 244, 232, 255;
   background:
-    radial-gradient(circle at 50% 22%, rgba(115, 55, 141, 0.38), transparent 34%),
-    radial-gradient(circle at 20% 80%, rgba(232, 164, 140, 0.12), transparent 35%),
-    linear-gradient(150deg, #35124b 0%, #120717 44%, #050507 100%);
-  background-size: 145% 145%, 155% 155%, 180% 180%;
+    radial-gradient(circle at 50% 22%, rgba(115, 55, 141, 0.42), transparent 46%) padding-box,
+    radial-gradient(circle at 20% 80%, rgba(232, 164, 140, 0.14), transparent 46%) padding-box,
+    linear-gradient(150deg, #35124b 0%, #120717 52%, #050507 100%) padding-box,
+    linear-gradient(132deg, #8a4f82, #f4e8ff 16%, #e8a48c 33%, #fff6df 50%, #a97499 67%, #f4e8ff 84%, #8a4f82) border-box;
   box-shadow:
     0 28px 90px rgba(0, 0, 0, 0.62),
-    0 0 42px rgba(244, 232, 255, 0.16),
-    inset 0 0 0 1px rgba(232, 164, 140, 0.22);
-  animation: rare-card-color-drift 12s ease-in-out infinite;
+    0 0 46px rgba(232, 164, 140, 0.2);
 }
 
+/* The rarest cards shimmer: two soft lights that fade in and out. */
 .card-position-rare::before {
   content: '';
   position: absolute;
-  inset: 3px;
+  inset: 0;
   z-index: 1;
-  border-radius: 13px;
+  border-radius: 14px;
   pointer-events: none;
   background:
-    radial-gradient(circle at 18% 22%, rgba(244, 232, 255, 0.23), transparent 23%),
-    radial-gradient(circle at 82% 72%, rgba(232, 164, 140, 0.2), transparent 26%),
+    radial-gradient(circle at 18% 22%, rgba(244, 232, 255, 0.23), transparent 30%),
+    radial-gradient(circle at 82% 72%, rgba(232, 164, 140, 0.2), transparent 32%),
     linear-gradient(118deg, transparent 20%, rgba(215, 177, 255, 0.1) 35%, rgba(255, 246, 223, 0.12) 46%, rgba(232, 164, 140, 0.09) 56%, transparent 70%);
-  background-size: 145% 145%, 150% 150%, 220% 100%;
-  box-shadow:
-    inset 0 0 0 1px rgba(244, 232, 255, 0.1),
-    inset 0 0 28px rgba(115, 55, 141, 0.1);
-  opacity: 0.72;
-  animation: rare-card-ambience 9s ease-in-out infinite;
+  box-shadow: inset 0 0 28px rgba(115, 55, 141, 0.16);
+  opacity: 0.6;
+  animation: rare-card-ambience 7s ease-in-out infinite;
 }
 
 .game-card.card-position-rare::after {
-  padding: 3px;
-  background: conic-gradient(
-    from var(--card-rainbow-angle),
-    #6e3c67,
-    #f4e8ff,
-    #e8a48c,
-    #fff6df,
-    #a97499,
-    #f4e8ff,
-    #6e3c67
-  );
-  filter: drop-shadow(0 0 7px rgba(244, 232, 255, 0.5));
-  animation: rare-card-foil 8s linear infinite;
+  box-shadow:
+    inset 0 0 0 1px rgba(244, 232, 255, 0.5),
+    inset 0 0 26px rgba(232, 164, 140, 0.22);
 }
 
 .card-position-rare .card-icon-color {
@@ -648,42 +505,9 @@
   }
 }
 
-@keyframes position-foil-drift {
-  to { --card-rainbow-angle: 360deg; }
-}
-
-@keyframes rare-card-foil {
-  0% { --card-rainbow-angle: 0deg; opacity: 0.78; }
-  50% { opacity: 1; }
-  100% { --card-rainbow-angle: 360deg; opacity: 0.78; }
-}
-
 @keyframes rare-card-ambience {
-  0%, 100% {
-    background-position: 0% 0%, 100% 100%, 130% 0;
-    opacity: 0.62;
-  }
-  50% {
-    background-position: 22% 14%, 78% 82%, -120% 0;
-    opacity: 0.88;
-  }
-}
-
-@keyframes rare-card-color-drift {
-  0%, 100% {
-    background-position: 50% 0%, 0% 100%, 0% 50%;
-    box-shadow:
-      0 28px 90px rgba(0, 0, 0, 0.62),
-      0 0 36px rgba(215, 177, 255, 0.14),
-      inset 0 0 0 1px rgba(232, 164, 140, 0.2);
-  }
-  50% {
-    background-position: 42% 18%, 24% 76%, 100% 50%;
-    box-shadow:
-      0 28px 90px rgba(0, 0, 0, 0.62),
-      0 0 52px rgba(232, 164, 140, 0.22),
-      inset 0 0 0 1px rgba(244, 232, 255, 0.3);
-  }
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .luxury-heart-fill::after {
@@ -700,30 +524,9 @@
   100% { transform: translateX(150%); }
 }
 
-@property --card-rainbow-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes card-rainbow-drift {
-  to { --card-rainbow-angle: 360deg; }
-}
-
-@keyframes card-border-breathe {
-  0%, 100% { opacity: 0.78; filter: drop-shadow(0 0 2px currentColor); }
-  50% { opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.38)); }
-}
-
-/* Shared restrained hover treatment for setup surfaces. */
-.interactive-box {
-  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), border-color 260ms ease, box-shadow 260ms ease, background-color 260ms ease;
-}
-
-.interactive-box:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255, 107, 157, 0.42);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24), 0 0 18px rgba(255, 107, 157, 0.07);
+@keyframes card-edge-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .avatar-menu {
@@ -742,10 +545,8 @@
     opacity: .18;
   }
   .game-card::after,
-  .luxury-deck__face::after,
-  .luxury-shuffle__card::after,
+  .game-card.table-card-face::after,
   .position-content-reveal::after,
-  .card-position-rare,
   .card-position-rare::before,
   .card-position-rare .mythic-icon-aura,
   .card-position-rare .mythic-icon-aura::before,
@@ -754,14 +555,13 @@
   .avatar-menu,
   .animate-float-slow,
   .input-shimmer::placeholder { animation: none; }
-  .interactive-box:hover { transform: none; }
 }
 
 /* Card corner decorations (suit symbols) for intimate/passionate */
 .card-corner-deco {
   position: absolute;
   font-size: 10px;
-  color: rgba(180, 120, 255, 0.35);
+  color: rgba(var(--card-accent, 226, 194, 117), 0.4);
   z-index: 3;
   pointer-events: none;
 }
@@ -772,31 +572,151 @@
   z-index: 3;
 }
 
-/* Card icon wrapper */
+/* ===== One card size =====
+   Every card keeps the same 11:15 frame: on the table its height follows the
+   window (see components/game/game-table.css), in the collection the grid sets
+   the width. Long texts get a denser layout instead of a taller card. */
+.card-ratio {
+  aspect-ratio: 11 / 15;
+}
+
+/* Card body inside a fixed frame. The icon gives up room first: the
+   useCardContentFit hook sets --icon-max so the text fits; custom images keep
+   their width cap and only lose height (object-fit keeps the art whole). */
+.card-fit-area [data-card-icon] {
+  max-height: var(--icon-max, none);
+}
+
+.card-fit-area [data-card-icon]:not(.card-custom-icon-wrapper) {
+  max-width: var(--icon-max, none);
+}
+
+/* Grid cards (there can be hundreds) are not measured: the icon never takes
+   more than part of the content area's height, the text is clamped by lines. */
+.card-fit-static {
+  container-type: size;
+}
+
+.card-fit-static [data-card-icon] {
+  min-height: 1.5rem;
+  max-height: 38cqh;
+  flex: 0 1 auto;
+}
+
+.card-fit-static [data-card-icon]:not(.card-custom-icon-wrapper) {
+  max-width: 38cqh;
+}
+
+/* As many lines as the card has room for. */
+.card-grid-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+@container (min-height: 11rem) {
+  .card-grid-text { -webkit-line-clamp: 4; }
+}
+
+@container (min-height: 14rem) {
+  .card-grid-text { -webkit-line-clamp: 5; }
+}
+
+/* Cells of the collection are skipped while off screen, which clips them to their
+   own box: no glow, shadow or lift may reach outside it. */
+.collection-cell .game-card,
+.collection-cell .game-card:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+.collection-cell .game-card {
+  transition: filter 200ms ease;
+}
+
+@media (hover: hover) {
+  .collection-cell .game-card:hover {
+    filter: brightness(1.12);
+  }
+}
+
+/* Scrollable card body, for the rare text that still does not fit: content is
+   centred when it fits and starts at the top when it does not; a soft fade
+   tells the reader there is more below. Never scrolls sideways. Chrome and
+   Safari use the slim site scrollbar below (setting scrollbar-width here would
+   switch them to the classic bar with arrow buttons). */
+.card-scroll-area {
+  overflow-x: hidden;
+}
+
+.card-scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .card-scroll-area {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(212, 175, 55, 0.3) transparent;
+  }
+}
+
+.card-scroll-area[data-more='true'] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+}
+
+/* Card icon wrapper.
+   Size = base × artwork factor × the card's iconScale (set inline as --icon-scale),
+   so the layout box always matches what is drawn and the icon can never spill
+   over the card text, whatever scale the admin picks. */
+.card-icon-wrapper,
+.card-icon-wrapper-lg,
+.card-icon-wrapper-sm {
+  --icon-base: 72px;
+  width: calc(var(--icon-base) * var(--icon-art, 1) * var(--icon-scale, 1));
+  height: calc(var(--icon-base) * var(--icon-art, 1) * var(--icon-scale, 1));
+  transition: width 200ms ease, height 200ms ease;
+}
+
 .card-icon-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 72px;
-  height: 72px;
   margin: 0 auto;
   filter: drop-shadow(0 0 8px currentColor);
 }
 
 .card-icon-wrapper-lg {
-  width: 96px;
-  height: 96px;
+  --icon-base: 96px;
 }
 
+/* Grid cards: the icon follows the card's width (container: .card-fit-static). */
 .card-icon-wrapper-sm {
-  width: 48px;
-  height: 48px;
+  --icon-base: clamp(48px, 26cqw, 96px);
+}
+
+/* Illustrated couple art carries transparent padding, so it is drawn at 142%
+   of a line icon. Grow the box instead of letting the image overflow it. */
+:is(.card-icon-wrapper, .card-icon-wrapper-lg, .card-icon-wrapper-sm):has(.generated-couple-icon) {
+  --icon-art: 1.42;
+}
+
+:is(.card-icon-wrapper, .card-icon-wrapper-lg, .card-icon-wrapper-sm) .generated-couple-icon {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-icon-wrapper,
+  .card-icon-wrapper-lg,
+  .card-icon-wrapper-sm { transition: none; }
 }
 
 /* Uploaded bitmap icons need more presence than line-based SVGs. */
 .card-custom-icon-wrapper {
-  width: 92px;
-  height: 92px;
+  --icon-base: 92px;
   max-width: 42%;
   filter: none;
   overflow: visible;
@@ -806,14 +726,12 @@
 }
 
 .card-icon-wrapper-sm.card-custom-icon-wrapper {
-  width: 68px;
-  height: 68px;
+  --icon-base: clamp(68px, 34cqw, 124px);
   max-width: 48%;
 }
 
 .card-icon-wrapper-lg.card-custom-icon-wrapper {
-  width: 124px;
-  height: 124px;
+  --icon-base: 124px;
   max-width: 46%;
 }
 
@@ -911,16 +829,15 @@
   inset: 0;
   z-index: 30;
   pointer-events: none;
-  border-radius: inherit;
-  background: linear-gradient(115deg, transparent 32%, rgba(255, 246, 220, 0.5) 46%, rgba(255, 255, 255, 0.12) 54%, transparent 68%);
-  background-size: 260% 100%;
-  animation: card-sheen-sweep 1.15s 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 246, 220, 0.42) 47%, rgba(255, 255, 255, 0.12) 55%, transparent 70%);
+  transform: translateX(-125%);
+  animation: card-sheen-sweep 1s 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes card-sheen-sweep {
-  0% { background-position: 125% 0; opacity: 0; }
+  0% { transform: translateX(-125%); opacity: 0; }
   18% { opacity: 1; }
-  100% { background-position: -25% 0; opacity: 0; }
+  100% { transform: translateX(125%); opacity: 0; }
 }
 
 /* Entrance for intro/setup. The fill mode is "backwards" so no transform
@@ -984,7 +901,181 @@
   .ambient-heat::after,
   .bokeh--drift,
   .screen-enter,
-  .screen-fade { animation: none; }
+  .screen-fade,
+  .animate-candle-glow,
+  .animate-pulse,
+  .animate-spin,
+  .input-focus-glow:focus { animation: none; }
   .card-sheen { display: none; }
   .btn-shine:active:not(:disabled) { scale: none; }
+  .game-card:not(.table-card-face):hover,
+  input[type="text"]:focus,
+  textarea:focus,
+  select:hover,
+  select:focus { transform: none; }
+}
+
+/* ===== Intro =====
+   Everything scales with the width and the height of the window, so the main
+   button is on screen even on a low laptop. */
+.intro-screen {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  width: 100%;
+  max-width: 60rem;
+  min-height: 100svh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(.75rem, 2svh, 1.5rem);
+  margin: 0 auto;
+  padding: clamp(1rem, 3svh, 2rem) 1rem clamp(.9rem, 2.4svh, 1.5rem);
+  text-align: center;
+}
+
+.intro-screen__main {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+}
+
+.intro-screen__candle {
+  position: relative;
+  width: clamp(3.5rem, 10svh, 5rem);
+  height: clamp(3.5rem, 10svh, 5rem);
+  margin-bottom: clamp(.6rem, 2.4svh, 1.5rem);
+}
+
+.intro-screen__title {
+  font-size: clamp(2.5rem, min(10.5vw, 13svh), 6rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.intro-screen__tagline {
+  margin-top: clamp(.4rem, 1.4svh, .75rem);
+  color: #ff8bb4;
+  font-size: clamp(1.1rem, min(5vw, 3.6svh), 1.5rem);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.intro-screen__lead {
+  max-width: 32rem;
+  margin-top: clamp(.6rem, 2svh, 1rem);
+  color: #e5e5e5;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.intro-screen__levels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .5rem;
+  margin-top: clamp(.75rem, 2.8svh, 1.75rem);
+  margin-bottom: clamp(1rem, 3.6svh, 2.25rem);
+}
+
+.intro-screen__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .6rem;
+}
+
+/* With a game to go back to, that card is what matters on this screen. */
+.intro-screen__main[data-saved-game] .intro-screen__lead {
+  display: none;
+}
+
+.intro-screen__main[data-saved-game] .intro-screen__levels {
+  margin-bottom: clamp(.75rem, 2.4svh, 1.5rem);
+}
+
+@media (max-height: 880px) {
+  .intro-screen__main[data-saved-game] .intro-screen__levels {
+    display: none;
+  }
+
+  .intro-screen__main[data-saved-game] .intro-screen__tagline {
+    margin-bottom: 1rem;
+  }
+}
+
+@media (max-height: 760px) {
+  .intro-screen {
+    gap: .4rem;
+    padding-block: .75rem .6rem;
+  }
+
+  .intro-screen__main[data-saved-game] .intro-screen__candle {
+    display: none;
+  }
+}
+
+@media (max-height: 700px) {
+  .intro-screen__candle {
+    display: none;
+  }
+}
+
+/* Slow gold sheen across the intro title. */
+.title-shimmer {
+  background: linear-gradient(100deg, #b8892a 0%, #f7e7b0 18%, #d4af37 36%, #b8892a 54%, #f7e7b0 72%, #d4af37 90%, #b8892a 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: title-shimmer 9s linear infinite;
+}
+
+@keyframes title-shimmer {
+  from { background-position: 0% 0; }
+  to { background-position: -250% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-shimmer { animation: none; }
+}
+
+/* Setup screen feedback: a short shake when the last level can't be removed,
+   a pulse that points at the consent box, and the mobile start bar sliding in. */
+.setup-shake {
+  animation: setup-shake 380ms ease-in-out;
+}
+
+.setup-attention {
+  animation: setup-attention 1.1s ease-out 2;
+}
+
+.setup-start-bar {
+  animation: setup-bar-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes setup-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-2px); }
+}
+
+@keyframes setup-attention {
+  0% { box-shadow: 0 0 0 0 rgba(251, 113, 133, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(251, 113, 133, 0); }
+}
+
+@keyframes setup-bar-in {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-shake,
+  .setup-attention,
+  .setup-start-bar { animation: none; }
 }

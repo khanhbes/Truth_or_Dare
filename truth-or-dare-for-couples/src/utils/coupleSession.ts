@@ -1,6 +1,7 @@
 import type { CardItem } from '../types';
 import { ACCOUNT_ASSET_ID_PATTERN, type AccountCatalog } from './accountCatalog';
 import { browserCardImageStore, hydrateCardImages } from './cardImageStore';
+import { fetchWithTimeout } from './fetchWithTimeout';
 
 export interface CoupleSession {
   loggedIn: boolean;
@@ -8,6 +9,8 @@ export interface CoupleSession {
   coupleName?: string;
   unlockedCardIds?: string[];
   totalCardsOpened?: number;
+  /** The server could not be reached, so "not signed in" is only a guess. */
+  unreachable?: boolean;
 }
 
 export class CoupleApiError extends Error {
@@ -36,16 +39,16 @@ const readJson = async <T>(response: Response): Promise<T> => {
 export const isValidCouplePin = (pin: string): boolean => /^\d{4,8}$/.test(pin.trim());
 
 export const getCoupleSession = async (): Promise<CoupleSession> => {
+  let response: Response;
   try {
-    return await readJson<CoupleSession>(
-      await fetch('/api/couple/session', {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      }),
-    );
+    response = await fetchWithTimeout('/api/couple/session', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
   } catch {
-    return { loggedIn: false };
+    return { loggedIn: false, unreachable: true };
   }
+  return readJson<CoupleSession>(response).catch(() => ({ loggedIn: false }));
 };
 
 export const registerCouple = async (
@@ -81,7 +84,7 @@ export const syncCoupleUnlockedCards = async (
   unlockedCardIds: string[],
 ): Promise<{ success: boolean; unlockedCardIds: string[]; totalCardsOpened: number } | null> => {
   try {
-    const response = await fetch('/api/couple/sync-unlocked', {
+    const response = await fetchWithTimeout('/api/couple/sync-unlocked', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },

@@ -270,7 +270,13 @@ export const derivePositionDifficultyStars = (card: CardItem): PositionDifficult
   const explicit = card.position?.difficultyStars;
   if (explicit) {
     const normalized = explicit <= 5 ? (explicit + 5) : explicit;
-    if (normalized >= 6 && normalized <= 10) return normalized as PositionDifficultyStars;
+    if (normalized >= 6 && normalized <= 10) {
+      // 10★ is reserved for Have Sex (the three-card final). A regular Position
+      // card saved as 10★ would never be drawn (no band weights 10★) and would
+      // add 0% Luxury, so it plays as the hottest regular tier instead.
+      if (normalized === 10 && card.position?.family !== 'have_sex') return 9;
+      return normalized as PositionDifficultyStars;
+    }
   }
   if (card.position?.family === 'have_sex') return 10;
   if (card.position?.family === 'handjob') return 8;
@@ -1101,7 +1107,15 @@ export const selectLuxuryPositionCard = (
     ?? chooseNearestAvailableStar(candidates, getLuxuryProgressionBand(options.luxuryPercent, options.config));
   if (!selectedStar) return failure('no_cards');
   const starPool = candidates.filter((card) => derivePositionDifficultyStars(card) === selectedStar);
-  const cardById = new Map(nonFinalEligible.map((card) => [card.id, card] as const));
+  // Count EVERY Position card drawn this session, including turn-specific ones
+  // only the partner could draw. Counting just the current player's eligible
+  // cards made the balance per-turn, so a family drawn twice on the partner's
+  // turns still looked "unseen" here and kept being favoured.
+  const cardById = new Map(
+    options.cards
+      .filter((card) => getCardDeck(card) === 'position' && card.position && card.position.family !== 'have_sex')
+      .map((card) => [card.id, card] as const),
+  );
   const sessionCards = options.usedCardIds
     .map((id) => cardById.get(id))
     .filter((card): card is CardItem => Boolean(card));

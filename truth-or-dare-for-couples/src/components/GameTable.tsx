@@ -1,33 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import confetti from 'canvas-confetti';
-import {
-  Heart,
-  Volume2,
-  VolumeX,
-  BookOpen,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  XCircle,
-  Timer as TimerIcon,
-  RotateCcw,
-  Sparkles,
-  Trophy,
-  ChevronRight,
-  Flame,
-  HelpCircle,
-  Zap,
-  LockOpen,
-  Percent,
-  Star,
-  Shuffle,
-  TrendingUp,
-  ShieldCheck,
-  Flag,
-  Info,
-  Ellipsis,
-} from 'lucide-react';
+import { Flag, Heart, LockOpen, TriangleAlert } from 'lucide-react';
 import {
   CardItem,
   CardResolutionEvent,
@@ -47,17 +20,31 @@ import {
   ProgressionConfig,
   RewardEvent,
 } from '../types';
-import { LEVEL_INFO } from '../data/cards';
 import { soundEngine } from '../utils/audio';
-import { getCardIcon, autoAssignIcon } from './CardIcons';
+import { fireFinalConfetti, fireHeartConfetti, fireMilestoneConfetti } from '../utils/confetti';
+import { DURATION, EASE_OUT, TABLE_TIMING } from '../utils/motionTokens';
+import { preloadCardArt } from './CardIcons';
+import { ConfirmDialog } from './ConfirmDialog';
 import { PenaltyPrompt } from './PenaltyPrompt';
 import { GarmentRemovalDialog } from './GarmentRemovalDialog';
 import { GarmentSwapDialog } from './GarmentSwapDialog';
 import { DualGarmentRemovalDialog } from './DualGarmentRemovalDialog';
-import { OutfitFigure } from './OutfitFigure';
-import {
-  getRemovalTargetIndices,
-} from '../utils/cardSelection';
+import { CardSpark } from './game/CardSpark';
+import { ChooseType } from './game/ChooseType';
+import { FinalChoice } from './game/FinalChoice';
+import { GameHeader } from './game/GameHeader';
+import { PauseDialog } from './game/PauseDialog';
+import { PlayerPanel } from './game/PlayerPanel';
+import { PositionConsent } from './game/PositionConsent';
+import { PositionEmpty } from './game/PositionEmpty';
+import { TableActions } from './game/TableActions';
+import { TableCard, type CardExit } from './game/TableCard';
+import { TableDeck } from './game/TableDeck';
+import { TurnStrip } from './game/TurnStrip';
+import { useTableShortcuts } from './game/useTableShortcuts';
+import { isDialogOpen } from './useDialogFocus';
+import './game/game-table.css';
+import { getRemovalTargetIndices } from '../utils/cardSelection';
 import {
   GARMENT_LABELS,
   getOutfitStage,
@@ -69,6 +56,7 @@ import {
   swapGarments,
 } from '../utils/wardrobe';
 import { requiresTimerStartBeforeCompletion, resolveCardTimerSeconds } from '../utils/cardTimer';
+import type { FinalChoiceSnapshot, TableSnapshot } from '../utils/gameSession';
 import {
   advanceClothingTurn,
   clothingEffectFamily,
@@ -81,6 +69,8 @@ import {
   createDynamicClothingSchedule,
   getActiveClothingRemovalTarget,
   injectClothingDirective,
+  getTruthLockReason,
+  shouldForceClothingDare,
   shouldInjectClothingDirective,
   updateDynamicClothingScheduler,
 } from '../utils/dynamicClothingScheduler';
@@ -106,7 +96,6 @@ import {
   calculateCompletedPositionLuxury,
   deriveDifficultyStars,
   derivePositionDifficultyStars,
-  getCardTurnAudience,
   getCardDeck,
   getStandardCardPerformerIndex,
   getJourneyDrawAnalysis,
@@ -161,111 +150,40 @@ interface GameTableProps {
   onNavigationLockChange?: (locked: boolean) => void;
   coupleName?: string;
   onOpenAccountModal?: () => void;
+  /** Continues a saved game; only read when the table mounts. */
+  initialSnapshot?: TableSnapshot | null;
+  /** Called whenever the table is in a state worth saving. */
+  onSnapshot?: (snapshot: TableSnapshot) => void;
+  /** Changes when the Back button asks to leave the game. */
+  endRequestId?: number;
 }
-
-interface PlayerOutfitStatusProps {
-  player: Player;
-  outfitState: OutfitState;
-  rewardState: PlayerRewardState;
-  hasPendingDifficultyBoost: boolean;
-  active: boolean;
-  mobile?: boolean;
-  /** 0–1 warmth of the moment, shown as blush, smile and hearts. */
-  mood?: number;
-}
-
-const OUTFIT_STAGE_COPY = {
-  dressed: 'Đang mặc đồ',
-  underwear_only: 'Chỉ còn đồ lót',
-  empty: 'Hết đồ đã chọn',
-} as const;
-
-const AUDIENCE_LABELS = {
-  male: 'Nam',
-  female: 'Nữ',
-  both: 'Cả hai',
-} as const;
-const POSITION_RECIPIENT_LABELS = { male: 'Lượt Nam', female: 'Lượt Nữ', both: 'Cả hai lượt' } as const;
-const POSITION_FAMILY_LABELS = {
-  oral: 'Oral cùng nhau',
-  blowjob: 'Oral',
-  handjob: 'Hand',
-  have_sex: 'Have sex',
-  other: 'Tư thế khác',
-} as const;
 
 /** Intimacy level below which skipping never asks for a garment as penalty. */
 const PENALTY_GARMENT_MIN_PERCENT = 20;
 
-type FinalChoiceState = {
-  candidates: CardItem[];
-  /** How many cards the couple may reveal before choosing (1 = blind pick). */
-  flips: 1 | 2 | 3;
-  revealedIds: string[];
-};
+type FinalChoiceState = FinalChoiceSnapshot;
+type Outfits = [OutfitState, OutfitState];
 
-const finalCardTitle = (card: CardItem): string => {
-  const hint = card.hint?.split('·')[0]?.trim();
-  if (hint) return hint;
-  return card.content.length > 70 ? `${card.content.slice(0, 67).trim()}…` : card.content;
-};
+/** A garment is coming off: the light, then the new outfit, then the turn goes on. */
+interface RemovalScene {
+  targets: PlayerIndex[];
+  /** What the figures wear during the scene; null while only the light is on. */
+  outfits: Outfits | null;
+}
 
-const getPositionFamilyLabel = (card: CardItem) =>
-  card.position?.family === 'other'
-    ? card.position.customLabel?.trim() || POSITION_FAMILY_LABELS.other
-    : card.position
-      ? POSITION_FAMILY_LABELS[card.position.family]
-      : '';
+/** One draw: shuffle, the card lifts off the deck, the card turns over. */
+interface DrawSequence {
+  place: () => void;
+  reveal: () => void;
+  placed: boolean;
+}
 
-const PlayerOutfitStatus: React.FC<PlayerOutfitStatusProps> = React.memo(({
-  player,
-  outfitState,
-  rewardState,
-  hasPendingDifficultyBoost,
-  active,
-  mobile = false,
-  mood = 0,
-}) => {
-  const stage = getOutfitStage(outfitState);
-  const count = getPresentGarmentSlots(outfitState).length;
+const JOURNEY_MILESTONES = [25, 50, 75, 100];
+const crossesMilestone = (before: number, after: number): boolean =>
+  JOURNEY_MILESTONES.some((milestone) => before < milestone && after >= milestone);
 
-  return (
-    <aside
-      className={`game-player-outfit relative overflow-hidden rounded-2xl border px-2.5 py-2.5 text-center transition-all ${mobile ? 'game-player-outfit--mobile' : ''} ${
-        active
-          ? 'border-rose-400/50 bg-rose-500/[0.08] shadow-[0_0_24px_rgba(255,107,157,0.14)]'
-          : 'border-white/10 bg-black/20 opacity-80'
-      }`}
-      aria-label={`${player.name}: ${OUTFIT_STAGE_COPY[stage]}, còn ${count} món, ví ${rewardState.starBalance} sao${hasPendingDifficultyBoost ? ', đang bị tăng khó' : ''}`}
-    >
-      <OutfitFigure
-        outfit={outfitState.initial}
-        state={outfitState}
-        active={active}
-        mood={mood}
-        compact
-        className={mobile ? 'game-outfit-dock' : 'game-outfit-side'}
-        ariaLabel={`Hình trang phục hiện tại của ${player.name}`}
-      />
-      <div className={mobile ? '-mt-1' : 'mt-1'}>
-        <div className="truncate text-xs font-bold text-white">{player.avatar} {player.name}</div>
-        <div className={`mt-0.5 text-[10px] font-medium ${stage === 'empty' ? 'text-neutral-400' : stage === 'underwear_only' ? 'text-amber-300' : 'text-rose-200'}`}>
-          {OUTFIT_STAGE_COPY[stage]} · {count} món
-        </div>
-        <div className="mt-1 flex items-center justify-center gap-1 text-[10px] font-bold text-amber-200">
-          <Star className="h-3 w-3 fill-amber-300/25" aria-hidden="true" />
-          {rewardState.starBalance}★
-          {hasPendingDifficultyBoost && (
-            <span className="ml-1 rounded-full border border-orange-300/30 bg-orange-500/10 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-orange-200">
-              Tăng khó
-            </span>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
-});
-PlayerOutfitStatus.displayName = 'PlayerOutfitStatus';
+const countGarments = (outfits: readonly OutfitState[]): number =>
+  outfits.reduce((sum, outfit) => sum + getPresentGarmentSlots(outfit).length, 0);
 
 export const GameTable: React.FC<GameTableProps> = ({
   player1,
@@ -310,95 +228,67 @@ export const GameTable: React.FC<GameTableProps> = ({
   onNavigationLockChange,
   coupleName,
   onOpenAccountModal,
+  initialSnapshot = null,
+  onSnapshot,
+  endRequestId = 0,
 }) => {
-  const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
   const [isMuted, setIsMuted] = useState(soundEngine.getMuted());
-  const shouldReduceMotion = useReducedMotion();
+  const reduceMotion = Boolean(useReducedMotion());
   const figureMood = journeyPhase === 'standard' ? Math.min(1, intimacyPercent / 100) : 1;
-  const displayedJourneyPercent = journeyPhase === 'standard' ? intimacyPercent : luxuryIntimacyPercent;
-  const previousJourneyPercentRef = useRef(displayedJourneyPercent);
-  const [journeyGain, setJourneyGain] = useState<{ id: number; amount: number } | null>(null);
-  useEffect(() => {
-    const previous = previousJourneyPercentRef.current;
-    previousJourneyPercentRef.current = displayedJourneyPercent;
-    if (displayedJourneyPercent <= previous) return;
-    const gain = { id: Date.now(), amount: displayedJourneyPercent - previous };
-    setJourneyGain(gain);
-    const timer = window.setTimeout(() => {
-      setJourneyGain((current) => (current?.id === gain.id ? null : current));
-    }, 1600);
-    return () => window.clearTimeout(timer);
-  }, [displayedJourneyPercent]);
   const previousPhaseRef = useRef(journeyPhase);
   useEffect(() => {
     const previous = previousPhaseRef.current;
     previousPhaseRef.current = journeyPhase;
-    if (shouldReduceMotion || previous === journeyPhase || journeyPhase !== 'position_consent') return;
-    // Tim Hồng full and both undressed: a soft burst of hearts.
-    const heart = typeof confetti.shapeFromText === 'function' ? confetti.shapeFromText({ text: '♥', scalar: 2 }) : undefined;
-    confetti({
-      particleCount: 70,
-      spread: 100,
-      startVelocity: 32,
-      origin: { y: 0.55 },
-      scalar: 1.6,
-      colors: ['#fb7185', '#f9a8d4', '#fda4af', '#e2c275'],
-      ...(heart ? { shapes: [heart] } : {}),
-    });
-  }, [journeyPhase, shouldReduceMotion]);
+    if (reduceMotion || previous === journeyPhase || journeyPhase !== 'position_consent') return;
+    soundEngine.haptic([30, 60, 30, 60, 80]);
+    fireHeartConfetti();
+  }, [journeyPhase, reduceMotion]);
   const [showPenaltyPrompt, setShowPenaltyPrompt] = useState(false);
-  const [usedCardIds, setUsedCardIds] = useState<string[]>([]);
-  const [clothingJourney, setClothingJourney] = useState(createClothingJourney);
-  const [dynamicClothingScheduler, setDynamicClothingScheduler] = useState(() =>
-    createDynamicClothingSchedule(outfitStates),
+  const [usedCardIds, setUsedCardIds] = useState<string[]>(initialSnapshot?.usedCardIds ?? []);
+  const [clothingJourney, setClothingJourney] = useState(() =>
+    initialSnapshot?.clothingJourney ?? createClothingJourney(),
   );
-  const currentTriggerRef = useRef<{ itemId: string; targetIndex: PlayerIndex } | null>(null);
+  const [dynamicClothingScheduler, setDynamicClothingScheduler] = useState(() =>
+    initialSnapshot?.clothingScheduler ?? createDynamicClothingSchedule(outfitStates),
+  );
+  const currentTriggerRef = useRef<{ itemId: string; targetIndex: PlayerIndex } | null>(
+    initialSnapshot?.clothingTrigger ?? null,
+  );
   const [cardDirectorState, setCardDirectorState] = useState(() =>
-    createCardDirectorState(unlockedCardIds),
+    initialSnapshot?.cardDirector ?? createCardDirectorState(unlockedCardIds),
   );
   const [drawError, setDrawError] = useState<string | null>(null);
   const [liveMessage, setLiveMessage] = useState<string>('');
-  const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
-  const [intimacyGainNotice, setIntimacyGainNotice] = useState<string | null>(null);
+  const [gainNotice, setGainNotice] = useState<{ text: string; unlocked: boolean } | null>(null);
   const [removalRequest, setRemovalRequest] = useState<{
     source: 'card' | 'penalty' | 'preparation';
     targetIndex: PlayerIndex;
   } | null>(null);
   const [showSwapDialog, setShowSwapDialog] = useState(false);
   const [showDualRemovalDialog, setShowDualRemovalDialog] = useState(false);
-  const [finalChoice, setFinalChoice] = useState<FinalChoiceState | null>(null);
-  const [showOddsDetails, setShowOddsDetails] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showMoreMenu) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!moreMenuRef.current?.contains(event.target as Node)) setShowMoreMenu(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowMoreMenu(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [showMoreMenu]);
+  const [finalChoice, setFinalChoice] = useState<FinalChoiceState | null>(initialSnapshot?.finalChoice ?? null);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showPause, setShowPause] = useState(false);
+  const [scene, setScene] = useState<RemovalScene | null>(null);
+  const [cardExit, setCardExit] = useState<CardExit>('skipped');
+  const [quickFlip, setQuickFlip] = useState(false);
+  const [sparkId, setSparkId] = useState(0);
 
   // Card draw state machine
   const [drawState, setDrawState] = useState<
     'idle' | 'selecting_type' | 'shuffling' | 'drawing' | 'drawn'
-  >('idle');
-  const [activeCard, setActiveCard] = useState<CardItem | null>(null);
+  >(initialSnapshot?.activeCard ? 'drawn' : 'idle');
+  const [activeCard, setActiveCard] = useState<CardItem | null>(initialSnapshot?.activeCard ?? null);
   const [isRevealed, setIsRevealed] = useState<boolean>(!settings.privacyDefault);
-  const [cardFlipped, setCardFlipped] = useState<boolean>(false);
+  const [cardFlipped, setCardFlipped] = useState<boolean>(Boolean(initialSnapshot?.activeCard));
 
   // Timer state for Dares
-  const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
+  const [timerSeconds, setTimerSeconds] = useState<number | null>(() =>
+    initialSnapshot?.activeCard ? resolveCardTimerSeconds(initialSnapshot.activeCard) : null,
+  );
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [hasTimerStarted, setHasTimerStarted] = useState(false);
-  const [activeCardWasRerolled, setActiveCardWasRerolled] = useState(false);
+  const [activeCardWasRerolled, setActiveCardWasRerolled] = useState(initialSnapshot?.activeCardWasRerolled ?? false);
   const [drawProbabilitySnapshot, setDrawProbabilitySnapshot] = useState<
     | { deck: 'standard'; probabilities: JourneyDrawProbabilities }
     | { deck: 'position'; probabilities: LuxuryDrawProbabilities }
@@ -407,6 +297,8 @@ export const GameTable: React.FC<GameTableProps> = ({
   const didPlayTimerAlarmRef = useRef(false);
   const completionCommittedRef = useRef(false);
   const drawTimeoutsRef = useRef<number[]>([]);
+  const drawSequenceRef = useRef<DrawSequence | null>(null);
+  const sceneTimeoutsRef = useRef<number[]>([]);
   const wasTimerRunningBeforeSuspendRef = useRef(false);
 
   const currentPlayer = currentPlayerIndex === 0 ? player1 : player2;
@@ -424,6 +316,15 @@ export const GameTable: React.FC<GameTableProps> = ({
   const preferredClothingFamily = activeClothingOpportunity?.eventType === 'catch_up'
     ? 'opponent' as const
     : activeClothingOpportunity?.eventType ?? null;
+  // "Has this player removed anything yet?" comes from the outfits themselves:
+  // the journey flag only updated when a removal coincided with an open
+  // opportunity, so it often stayed false after real removals.
+  const firstRemoval = useMemo(
+    () => outfitStates.map((outfit) =>
+      getPresentGarmentSlots(outfit).length < Object.keys(outfit.initial.garments).length,
+    ) as [boolean, boolean],
+    [outfitStates],
+  );
   // The SAME options feed the on-screen odds and the real draw, so the
   // displayed percentages are exactly the ones the selector uses.
   const journeySelectionOptions = useMemo(() => ({
@@ -438,28 +339,40 @@ export const GameTable: React.FC<GameTableProps> = ({
     accountUnlockedCardIds: unlockedCardIds,
     preferredClothingFamily,
     clothingHistory: clothingJourney.history,
-    firstRemoval: clothingJourney.firstRemoval,
+    firstRemoval,
     directorState: cardDirectorState,
   }), [
     availableCards, currentPlayerIndex, outfitStates, usedCardIds,
     settings.levels, intimacyPercent, progressionConfig, activeDifficultyBoost,
-    unlockedCardIds, preferredClothingFamily, clothingJourney, cardDirectorState,
+    unlockedCardIds, preferredClothingFamily, clothingJourney, firstRemoval, cardDirectorState,
   ]);
   const dueClothingTrigger = useMemo(
     () => getActiveClothingRemovalTarget(dynamicClothingScheduler, intimacyPercent, outfitStates),
     [dynamicClothingScheduler, intimacyPercent, outfitStates],
   );
+  // A due removal lets one draw pass (a Truth may still come up) before the next
+  // one is forced to a Dare, so the undressing does not bunch up at the end.
+  const [waitedClothingTriggerId, setWaitedClothingTriggerId] = useState<string | null>(
+    initialSnapshot?.waitedClothingTriggerId ?? null,
+  );
+  const forceClothingDare = shouldForceClothingDare(dueClothingTrigger, waitedClothingTriggerId, intimacyPercent);
   const drawAnalysis = useMemo(
     () => getJourneyDrawAnalysis(journeySelectionOptions),
     [journeySelectionOptions],
   );
-  // A due garment removal makes the random draw prefer a Dare; show those odds.
+  // A forced removal makes the random draw a Dare; show those odds.
   const displayedDrawAnalysis = useMemo(() => {
-    if (!dueClothingTrigger || settings.drawMode === 'choose') return drawAnalysis;
+    if (!forceClothingDare || settings.drawMode === 'choose') return drawAnalysis;
     const dareAnalysis = getJourneyDrawAnalysis({ ...journeySelectionOptions, preferredType: 'dare' });
     return dareAnalysis.candidates.length > 0 ? dareAnalysis : drawAnalysis;
-  }, [dueClothingTrigger, settings.drawMode, drawAnalysis, journeySelectionOptions]);
+  }, [forceClothingDare, settings.drawMode, drawAnalysis, journeySelectionOptions]);
   const availableDrawTypes = drawAnalysis.availableTypes;
+  // Choosing Truth must not be a way around a due removal, and at 100% a Truth adds nothing.
+  const truthLockedReason = getTruthLockReason({
+    availableTypes: availableDrawTypes,
+    forceClothingDare,
+    intimacyPercent,
+  });
   const drawProbabilities = drawProbabilitySnapshot?.deck === 'standard'
     ? drawProbabilitySnapshot.probabilities
     : displayedDrawAnalysis.probabilities;
@@ -480,15 +393,59 @@ export const GameTable: React.FC<GameTableProps> = ({
   const luxuryDrawProbabilities = drawProbabilitySnapshot?.deck === 'position'
     ? drawProbabilitySnapshot.probabilities
     : currentLuxuryProbabilities;
-  const chance = (value: number) => `${Math.round(value * 100)}%`;
-  const navigationLocked = drawState === 'shuffling' || drawState === 'drawing';
+  const displayOutfits = scene?.outfits ?? outfitStates;
+  const navigationLocked = drawState === 'shuffling' || drawState === 'drawing' || scene !== null;
+  const isPaused = isSuspended || showEndConfirm || showPause;
 
   useEffect(() => {
     onNavigationLockChange?.(navigationLocked);
   }, [navigationLocked, onNavigationLockChange]);
 
+  // Saved between animations only, so a reload never lands in the middle of a draw.
   useEffect(() => {
-    if (isSuspended) {
+    if (!onSnapshot || navigationLocked) return;
+    onSnapshot({
+      usedCardIds,
+      clothingJourney,
+      clothingScheduler: dynamicClothingScheduler,
+      waitedClothingTriggerId,
+      cardDirector: cardDirectorState,
+      activeCard: drawState === 'drawn' ? activeCard : null,
+      activeCardWasRerolled,
+      clothingTrigger: drawState === 'drawn' ? currentTriggerRef.current : null,
+      finalChoice,
+    });
+  }, [
+    onSnapshot, navigationLocked, usedCardIds, clothingJourney, dynamicClothingScheduler,
+    waitedClothingTriggerId, cardDirectorState, drawState, activeCard, activeCardWasRerolled, finalChoice,
+  ]);
+
+  // Illustrations are not stored with a saved game; they return once the catalog has loaded.
+  useEffect(() => {
+    if (!initialSnapshot) return;
+    const withImage = (card: CardItem): CardItem => {
+      if (card.customImage) return card;
+      const image = availableCards.find((item) => item.id === card.id)?.customImage;
+      return image ? { ...card, customImage: image } : card;
+    };
+    setActiveCard((card) => (card ? withImage(card) : card));
+    setFinalChoice((choice) => {
+      if (!choice) return choice;
+      const candidates = choice.candidates.map(withImage);
+      return candidates.some((card, index) => card !== choice.candidates[index]) ? { ...choice, candidates } : choice;
+    });
+  }, [availableCards, initialSnapshot]);
+
+  // The Back button asks first instead of dropping the game (after a running animation).
+  const handledEndRequestRef = useRef(endRequestId);
+  useEffect(() => {
+    if (endRequestId === handledEndRequestRef.current || navigationLocked) return;
+    handledEndRequestRef.current = endRequestId;
+    setShowEndConfirm(true);
+  }, [endRequestId, navigationLocked]);
+
+  useEffect(() => {
+    if (isPaused) {
       if (isTimerRunning) wasTimerRunningBeforeSuspendRef.current = true;
       setIsTimerRunning(false);
       soundEngine.stopTimerAlarm();
@@ -498,13 +455,13 @@ export const GameTable: React.FC<GameTableProps> = ({
       wasTimerRunningBeforeSuspendRef.current = false;
       setIsTimerRunning(true);
     }
-  }, [isSuspended, isTimerRunning, timerSeconds]);
+  }, [isPaused, isTimerRunning, timerSeconds]);
 
   // Countdown uses one disposable timeout per second. The alarm is handled by
   // the guarded transition effect below, outside the state updater, so React
   // Strict Mode cannot accidentally schedule it twice.
   useEffect(() => {
-    if (isSuspended || !isTimerRunning || timerSeconds === null || timerSeconds <= 0) return;
+    if (isPaused || !isTimerRunning || timerSeconds === null || timerSeconds <= 0) return;
 
     const currentSeconds = timerSeconds;
     const timeout = window.setTimeout(() => {
@@ -517,21 +474,23 @@ export const GameTable: React.FC<GameTableProps> = ({
     }, 1000);
 
     return () => window.clearTimeout(timeout);
-  }, [isSuspended, isTimerRunning, timerSeconds]);
+  }, [isPaused, isTimerRunning, timerSeconds]);
 
   useEffect(() => {
-    if (isSuspended || timerSeconds !== 0 || didPlayTimerAlarmRef.current) return;
+    if (isPaused || timerSeconds !== 0 || didPlayTimerAlarmRef.current) return;
 
     didPlayTimerAlarmRef.current = true;
     setIsTimerRunning(false);
     soundEngine.playTimerAlarm(3000);
     setLiveMessage('Hết giờ. Chuông đang báo trong khoảng 3 giây.');
-  }, [isSuspended, timerSeconds]);
+  }, [isPaused, timerSeconds]);
 
   useEffect(
     () => () => {
       drawTimeoutsRef.current.forEach(window.clearTimeout);
       drawTimeoutsRef.current = [];
+      sceneTimeoutsRef.current.forEach(window.clearTimeout);
+      sceneTimeoutsRef.current = [];
       soundEngine.stopTimerAlarm();
     },
     [],
@@ -545,23 +504,102 @@ export const GameTable: React.FC<GameTableProps> = ({
     drawTimeoutsRef.current.push(timeout);
   };
 
-  useEffect(() => {
-    if (!unlockNotice) return;
-    const timeout = window.setTimeout(() => setUnlockNotice(null), 4200);
-    return () => window.clearTimeout(timeout);
-  }, [unlockNotice]);
-
-  useEffect(() => {
-    if (!intimacyGainNotice) return;
-    const timeout = window.setTimeout(() => setIntimacyGainNotice(null), 2600);
-    return () => window.clearTimeout(timeout);
-  }, [intimacyGainNotice]);
-
-  // Audio Toggles
-  const handleToggleMusic = () => {
-    const next = soundEngine.toggleBackgroundMusic();
-    setIsMusicOn(next);
+  /**
+   * Removing a button that has the focus makes the browser lay the page out on the
+   * spot. Let go of it first; the next main button takes the focus right after.
+   */
+  const releaseActionFocus = () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest('.table-actions, .table-card')) active.blur();
   };
+
+  // Shuffle, lift and turn over. The whole draw stays under 1.6 s and a tap skips the rest.
+  const finishDrawSequence = () => {
+    const sequence = drawSequenceRef.current;
+    if (!sequence) return;
+    drawSequenceRef.current = null;
+    releaseActionFocus();
+    soundEngine.playCardFlip();
+    sequence.reveal();
+  };
+
+  const placeDrawnCard = (liftMs: number) => {
+    const sequence = drawSequenceRef.current;
+    if (!sequence || sequence.placed) return;
+    sequence.placed = true;
+    soundEngine.haptic(12);
+    sequence.place();
+    scheduleDrawStep(finishDrawSequence, liftMs);
+  };
+
+  const startDrawSequence = (card: CardItem, place: () => void, reveal: () => void) => {
+    drawSequenceRef.current = { place, reveal, placed: false };
+    releaseActionFocus();
+    preloadCardArt(card);
+    setQuickFlip(false);
+    setDrawState('shuffling');
+    soundEngine.playShuffle();
+    scheduleDrawStep(
+      () => placeDrawnCard(reduceMotion ? TABLE_TIMING.reducedLift : TABLE_TIMING.lift),
+      reduceMotion ? TABLE_TIMING.reducedShuffle : TABLE_TIMING.shuffle,
+    );
+  };
+
+  const skipDrawSequence = () => {
+    const sequence = drawSequenceRef.current;
+    if (!sequence) return;
+    drawTimeoutsRef.current.forEach(window.clearTimeout);
+    drawTimeoutsRef.current = [];
+    setQuickFlip(true);
+    if (sequence.placed) finishDrawSequence();
+    else placeDrawnCard(40);
+  };
+
+  /**
+   * Light on the player, the garment comes off, and only then the points and the
+   * next turn. Nothing is committed before the end, so a reload in the middle
+   * simply shows the open card again.
+   */
+  const playRemovalScene = (targets: PlayerIndex[], outfits: Outfits, announcement: string, commit: () => void) => {
+    if (reduceMotion) {
+      commit();
+      setLiveMessage(announcement);
+      return;
+    }
+    const later = (callback: () => void, delay: number) => {
+      sceneTimeoutsRef.current.push(window.setTimeout(callback, delay));
+    };
+    setScene({ targets, outfits: null });
+    const total = TABLE_TIMING.spotlight + TABLE_TIMING.garmentOff;
+    later(() => {
+      soundEngine.haptic([18, 40, 30]);
+      setLiveMessage(announcement);
+      setScene({ targets, outfits });
+    }, TABLE_TIMING.spotlight);
+    later(() => {
+      setScene(null);
+      commit();
+    }, total);
+    // On phones the figures sit above the card: bring them into view, then go back.
+    const panels = document.querySelector<HTMLElement>('.game-outfit-mobile');
+    if (panels && panels.getClientRects().length > 0) {
+      const scrollTop = window.scrollY;
+      later(() => panels.scrollIntoView({ block: 'center', behavior: 'smooth' }), 30);
+      later(() => window.scrollTo({ top: scrollTop, behavior: 'smooth' }), total + 420);
+    }
+  };
+
+  useEffect(() => {
+    if (!gainNotice) return;
+    const timeout = window.setTimeout(() => setGainNotice(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [gainNotice]);
+
+  useEffect(() => {
+    if (sparkId === 0) return;
+    const timeout = window.setTimeout(() => setSparkId(0), TABLE_TIMING.spark);
+    return () => window.clearTimeout(timeout);
+  }, [sparkId]);
 
   const handleToggleMute = () => {
     const muted = soundEngine.toggleMute();
@@ -569,7 +607,7 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const handleTimerControl = () => {
-    if (isSuspended) return;
+    if (isPaused) return;
     if (!hasTimerStarted) {
       if (timerSeconds === null || timerSeconds <= 0) return;
       didPlayTimerAlarmRef.current = false;
@@ -599,7 +637,7 @@ export const GameTable: React.FC<GameTableProps> = ({
     soundEngine.playTick();
     setDrawError(null);
     if (availableDrawTypes.length === 0) {
-      setDrawError('Không còn thẻ phù hợp với cấp độ và trang phục hiện tại.');
+      setDrawError('Không còn lá phù hợp với cấp độ và trang phục hiện tại.');
       return;
     }
     if (settings.drawMode === 'choose') {
@@ -610,10 +648,11 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const executeDrawCard = (preferredType: CardType | null) => {
-    // A due clothing milestone prefers a Dare so the removal is attached to an action, never to a Truth.
+    // A due clothing milestone is attached to a Dare when one comes up (never to a Truth); once it
+    // has let a draw pass, the next random draw is a Dare.
     const dueTrigger = dueClothingTrigger;
     const selectionOptions = journeySelectionOptions;
-    const dareFirst = dueTrigger && !preferredType
+    const dareFirst = forceClothingDare && !preferredType
       ? selectJourneyCard({ ...selectionOptions, preferredType: 'dare' })
       : null;
     const selection = dareFirst?.card
@@ -626,8 +665,8 @@ export const GameTable: React.FC<GameTableProps> = ({
         : selection.errorCode === 'no_positive_weight'
           ? 'Không có loại hoặc bậc sao phù hợp ở mốc thân mật này.'
           : preferredType
-          ? `Không còn thẻ ${preferredType === 'truth' ? 'Sự Thật' : 'Thử Thách'} phù hợp.`
-          : 'Không còn thẻ phù hợp với trạng thái trang phục hiện tại.',
+          ? `Không còn lá ${preferredType === 'truth' ? 'Sự thật' : 'Thử thách'} phù hợp.`
+          : 'Không còn lá phù hợp với trạng thái trang phục hiện tại.',
       );
       setDrawState(preferredType ? 'selecting_type' : 'idle');
       return;
@@ -641,8 +680,10 @@ export const GameTable: React.FC<GameTableProps> = ({
         currentPlayerIndex,
         dueTrigger.targetIndex,
       );
+      setWaitedClothingTriggerId(null);
     } else {
       currentTriggerRef.current = null;
+      setWaitedClothingTriggerId(dueTrigger?.itemId ?? null);
     }
 
     completionCommittedRef.current = false;
@@ -651,11 +692,10 @@ export const GameTable: React.FC<GameTableProps> = ({
     setUsedCardIds(selection.nextUsedCardIds);
     setDrawProbabilitySnapshot({ deck: 'standard', probabilities: selection.probabilities });
     setDrawError(null);
-    setDrawState('shuffling');
+    setGainNotice(null);
     setTimerSeconds(null);
     setHasTimerStarted(false);
     setIsTimerRunning(false);
-    soundEngine.playShuffle();
     if (activeDifficultyBoost) {
       onPendingDifficultyBoostsChange(
         pendingDifficultyBoosts.filter((boost) => boost !== activeDifficultyBoost),
@@ -663,36 +703,26 @@ export const GameTable: React.FC<GameTableProps> = ({
       setLiveMessage(`Lượt tăng khó của ${activeDifficultyBoost.ownerPlayerIndex === 0 ? player1.name : player2.name} đã được áp dụng.`);
     }
 
-    scheduleDrawStep(() => {
-      setActiveCard(randomCard);
-      setDrawState('drawing');
-      setIsRevealed(!settings.privacyDefault);
-      setCardFlipped(false);
-
-      // Trigger 3D flip animation
-      scheduleDrawStep(() => {
+    startDrawSequence(
+      randomCard,
+      () => {
+        setActiveCard(randomCard);
+        setDrawState('drawing');
+        setIsRevealed(!settings.privacyDefault);
+        setCardFlipped(false);
+      },
+      () => {
         setCardFlipped(true);
-        soundEngine.playCardFlip();
         setDrawState('drawn');
-
         // A card may override, disable or inherit the configured duration for
         // its Truth/Action type.
-        const cardTimerSeconds = resolveCardTimerSeconds(randomCard);
-        if (cardTimerSeconds !== null) {
-          soundEngine.stopTimerAlarm();
-          didPlayTimerAlarmRef.current = false;
-          setTimerSeconds(cardTimerSeconds);
-          setHasTimerStarted(false);
-          setIsTimerRunning(false);
-        } else {
-          soundEngine.stopTimerAlarm();
-          didPlayTimerAlarmRef.current = false;
-          setTimerSeconds(null);
-          setHasTimerStarted(false);
-          setIsTimerRunning(false);
-        }
-      }, 500);
-    }, 900);
+        soundEngine.stopTimerAlarm();
+        didPlayTimerAlarmRef.current = false;
+        setTimerSeconds(resolveCardTimerSeconds(randomCard));
+        setHasTimerStarted(false);
+        setIsTimerRunning(false);
+      },
+    );
   };
 
   const handleQueueDifficultyBoost = () => {
@@ -782,38 +812,38 @@ export const GameTable: React.FC<GameTableProps> = ({
     setIsTimerRunning(false);
     setTimerSeconds(null);
     setHasTimerStarted(false);
+    setCardExit('rerolled');
     setActiveCard(null);
     setCardFlipped(false);
-    setDrawState('shuffling');
-    soundEngine.playShuffle();
-
-    scheduleDrawStep(() => {
-      setActiveCard(replacement);
-      setDrawState('drawing');
-      setIsRevealed(!settings.privacyDefault);
-      scheduleDrawStep(() => {
+    startDrawSequence(
+      replacement,
+      () => {
+        setActiveCard(replacement);
+        setDrawState('drawing');
+        setIsRevealed(!settings.privacyDefault);
+      },
+      () => {
         setCardFlipped(true);
         setDrawState('drawn');
-        soundEngine.playCardFlip();
         setTimerSeconds(resolveCardTimerSeconds(replacement));
         setHasTimerStarted(false);
         setIsTimerRunning(false);
         setActiveCardWasRerolled(true);
-      }, 400);
-    }, 650);
+      },
+    );
   };
 
-  const fireCompletionFeedback = () => {
+  /** A spark for every card; confetti only for a milestone, so it still means something. */
+  const celebrate = (milestone: boolean) => {
     soundEngine.playCompleteSound();
-    if (!shouldReduceMotion) {
-      confetti({
-        particleCount: 50,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#FF6B9D', '#D4AF37', '#FF1493', '#FFF'],
-      });
-    }
+    soundEngine.haptic(milestone ? [16, 40, 24] : 14);
+    if (reduceMotion) return;
+    setSparkId((id) => id + 1);
+    if (milestone) fireMilestoneConfetti();
   };
+
+  /** Completed cards fly to the player who earned them. */
+  const exitTowards = (playerIndex: PlayerIndex): CardExit => (playerIndex === 0 ? 'to-left' : 'to-right');
 
   const recordResolution = (
     card: CardItem,
@@ -828,6 +858,20 @@ export const GameTable: React.FC<GameTableProps> = ({
     timestamp: Date.now(),
   });
 
+  /** Tim Hồng is full and both outfits are empty: the couple decides about the Position deck. */
+  const openPositionConsent = () => {
+    soundEngine.stopTimerAlarm();
+    setIsTimerRunning(false);
+    setTimerSeconds(null);
+    setActiveCard(null);
+    setDrawState('idle');
+    setCardFlipped(false);
+    setIsRevealed(true);
+    // No card is open any more, so the odds on screen are those of the next card.
+    setDrawProbabilitySnapshot(null);
+    onJourneyPhaseChange('position_consent');
+  };
+
   const finalizeCompletedTurn = (
     includeCardRemovalBonus = false,
     outfitsAfter: readonly [OutfitState, OutfitState] = outfitStates,
@@ -835,11 +879,8 @@ export const GameTable: React.FC<GameTableProps> = ({
     if (!activeCard || completionCommittedRef.current) return;
     completionCommittedRef.current = true;
     recordResolution(activeCard, 'completed');
-    fireCompletionFeedback();
-    if (!unlockedCardIds.includes(activeCard.id)) {
-      onUnlockCard(activeCard.id);
-      setUnlockNotice(`Đã mở khóa lá bài mới trong Bộ sưu tập`);
-    }
+    const newlyUnlocked = !unlockedCardIds.includes(activeCard.id);
+    if (newlyUnlocked) onUnlockCard(activeCard.id);
     const gain = calculateCompletedCardIntimacy(
       intimacyPercent,
       activeCard,
@@ -847,6 +888,12 @@ export const GameTable: React.FC<GameTableProps> = ({
       includeCardRemovalBonus,
     );
     const nextIntimacy = gain.nextPercent;
+    // Every garment must come off through the cards themselves: the Position
+    // deck opens only once Tim Hồng is full AND both outfits are empty.
+    const opensPositionDeck = nextIntimacy >= 100 && outfitsAfter.every((outfit) => getOutfitStage(outfit) === 'empty');
+    const firstGarmentOff = !firstRemoval.some(Boolean) && countGarments(outfitsAfter) < countGarments(outfitStates);
+    // The hearts of the Position deck follow at once; two bursts would only blur each other.
+    celebrate(!opensPositionDeck && (firstGarmentOff || crossesMilestone(intimacyPercent, nextIntimacy)));
     const appliedTotal = gain.totalApplied;
     const appliedBase = gain.baseApplied;
     const appliedRemoval = gain.removalApplied;
@@ -921,9 +968,14 @@ export const GameTable: React.FC<GameTableProps> = ({
       );
       currentTriggerRef.current = null;
     }
-    setIntimacyGainNotice(
-      `+${appliedTotal}% thân mật · +${earnedStars}★ cho ${performingPlayer.name}${appliedRemoval > 0 ? ` · gồm +${appliedRemoval}% bỏ đồ` : ''}`,
-    );
+    setGainNotice({
+      text: [
+        appliedTotal > 0 ? `+${appliedTotal}% thân mật` : null,
+        `+${earnedStars}★ cho ${performingPlayer.name}`,
+        appliedRemoval > 0 ? `gồm +${appliedRemoval}% bỏ đồ` : null,
+      ].filter(Boolean).join(' · '),
+      unlocked: newlyUnlocked,
+    });
     if (performingPlayerIndex === 0) {
       onUpdatePlayers(
         { ...player1, completedCount: player1.completedCount + 1 },
@@ -935,39 +987,28 @@ export const GameTable: React.FC<GameTableProps> = ({
         completedCount: player2.completedCount + 1,
       });
     }
-    // Every garment must come off through the cards themselves: the Position
-    // deck opens only once Tim Hồng is full AND both outfits are empty.
-    if (nextIntimacy >= 100 && outfitsAfter.every((outfit) => getOutfitStage(outfit) === 'empty')) {
-      soundEngine.stopTimerAlarm();
-      setIsTimerRunning(false);
-      setTimerSeconds(null);
-      setActiveCard(null);
-      setDrawState('idle');
-      setCardFlipped(false);
-      setIsRevealed(true);
-      onJourneyPhaseChange('position_consent');
+    if (opensPositionDeck) {
+      openPositionConsent();
       return;
     }
+    advanceNextTurn(exitTowards(performingPlayerIndex));
     if (nextIntimacy >= 100) {
-      setLiveMessage('Tim hồng đã đầy. Tiếp tục rút bài để cả hai cởi nốt trang phục rồi mở Bộ Tư thế.');
+      setLiveMessage('Tim Hồng đã đầy. Tiếp tục rút bài để cả hai cởi nốt trang phục rồi mở Bộ Tư thế.');
     }
-    advanceNextTurn();
   };
 
   const finalizeCompletedPosition = () => {
     if (!activeCard || completionCommittedRef.current) return;
     completionCommittedRef.current = true;
     recordResolution(activeCard, 'completed');
-    fireCompletionFeedback();
-    if (!unlockedCardIds.includes(activeCard.id)) {
-      onUnlockCard(activeCard.id);
-      setUnlockNotice('Đã mở khóa lá Tư thế mới trong Bộ sưu tập');
-    }
+    const newlyUnlocked = !unlockedCardIds.includes(activeCard.id);
+    if (newlyUnlocked) onUnlockCard(activeCard.id);
     const gain = calculateCompletedPositionLuxury(
       luxuryIntimacyPercent,
       activeCard,
       luxuryProgressionConfig,
     );
+    celebrate(crossesMilestone(luxuryIntimacyPercent, gain.nextPercent));
     onLuxuryIntimacyPercentChange(gain.nextPercent);
     if (gain.totalApplied > 0) {
       onAddIntimacyEvents([{
@@ -979,8 +1020,11 @@ export const GameTable: React.FC<GameTableProps> = ({
         timestamp: Date.now(),
       }]);
     }
-    setIntimacyGainNotice(`+${gain.totalApplied}% Luxury · ${derivePositionDifficultyStars(activeCard)}★`);
-    advanceNextTurn();
+    setGainNotice({
+      text: `+${gain.totalApplied}% Luxury · lá ${derivePositionDifficultyStars(activeCard)}★`,
+      unlocked: newlyUnlocked,
+    });
+    advanceNextTurn(exitTowards(currentPlayerIndex));
   };
 
   const finalizeCardCompletion = (
@@ -1028,22 +1072,15 @@ export const GameTable: React.FC<GameTableProps> = ({
       });
     }
     if (intimacyPercent >= 100 && outfitsAfter.every((outfit) => getOutfitStage(outfit) === 'empty')) {
-      soundEngine.stopTimerAlarm();
-      setIsTimerRunning(false);
-      setTimerSeconds(null);
-      setActiveCard(null);
-      setDrawState('idle');
-      setCardFlipped(false);
-      setIsRevealed(true);
-      onJourneyPhaseChange('position_consent');
+      openPositionConsent();
       return;
     }
-    advanceNextTurn();
+    advanceNextTurn('skipped');
   };
 
   // Action: Complete Challenge
   const handleComplete = () => {
-    if (!activeCard || completionCommittedRef.current) return;
+    if (!activeCard || completionCommittedRef.current || scene) return;
     if (timerSeconds !== null && !hasTimerStarted && requiresTimerStartBeforeCompletion(activeCard)) {
       setLiveMessage('Hãy bấm Bắt đầu thực hiện trước khi xác nhận kết quả.');
       return;
@@ -1053,10 +1090,7 @@ export const GameTable: React.FC<GameTableProps> = ({
     if (activeCard.position?.family === 'have_sex') {
       completionCommittedRef.current = true;
       recordResolution(activeCard, 'final_viewed');
-      if (!unlockedCardIds.includes(activeCard.id)) {
-        onUnlockCard(activeCard.id);
-        setUnlockNotice('Đã mở khóa lá Have Sex trong Bộ sưu tập');
-      }
+      if (!unlockedCardIds.includes(activeCard.id)) onUnlockCard(activeCard.id);
       onFinishGame('have_sex');
       return;
     }
@@ -1064,8 +1098,8 @@ export const GameTable: React.FC<GameTableProps> = ({
       completionCommittedRef.current = true;
       recordResolution(activeCard, 'passed');
       if (!unlockedCardIds.includes(activeCard.id)) onUnlockCard(activeCard.id);
+      advanceNextTurn('skipped');
       setLiveMessage(`${currentPlayer.name} đã chuyển lượt theo nội dung lá bài.`);
-      advanceNextTurn();
       return;
     }
     if (activeCard?.clothingEffect?.kind === 'swap_garments') {
@@ -1089,7 +1123,7 @@ export const GameTable: React.FC<GameTableProps> = ({
 
   // Action: Skip Challenge
   const handleSkip = () => {
-    if (!activeCard || completionCommittedRef.current) return;
+    if (!activeCard || completionCommittedRef.current || scene) return;
     soundEngine.playTick();
     soundEngine.stopTimerAlarm();
     setIsTimerRunning(false);
@@ -1110,43 +1144,39 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const handleConfirmRemoval = (slot: GarmentSlot) => {
-    if (!removalRequest) return;
-    const targetState = outfitStates[removalRequest.targetIndex];
+    if (!removalRequest || scene) return;
+    const { source, targetIndex } = removalRequest;
+    const targetState = outfitStates[targetIndex];
     const garment = getEquippedGarment(targetState, slot);
     const nextTargetState = removeGarment(targetState, slot);
     if (!garment || nextTargetState === targetState) return;
 
-    const nextOutfits: [OutfitState, OutfitState] = [outfitStates[0], outfitStates[1]];
-    nextOutfits[removalRequest.targetIndex] = nextTargetState;
-    onUpdateOutfits(nextOutfits);
-    const targetName = removalRequest.targetIndex === 0 ? player1.name : player2.name;
-    setLiveMessage(
-      `${targetName} đã bỏ ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}, còn ${getPresentGarmentSlots(nextTargetState).length} món.`,
-    );
-    onAddClothingRemovalEvent({
-      actorPlayerIndex: removalRequest.source === 'preparation'
-        ? removalRequest.targetIndex
-        : currentPlayerIndex,
-      targetPlayerIndex: removalRequest.targetIndex,
-      garmentSlot: slot,
-      garment: { styleId: garment.styleId, color: garment.color },
-      garmentId: garment.id,
-      action: 'removed',
-      source: removalRequest.source,
-      cardId: removalRequest.source === 'card' ? activeCard?.id : undefined,
-      round: currentRound,
-      timestamp: Date.now(),
-    });
+    const nextOutfits: Outfits = [outfitStates[0], outfitStates[1]];
+    nextOutfits[targetIndex] = nextTargetState;
+    const targetName = targetIndex === 0 ? player1.name : player2.name;
+    const announcement = `${targetName} đã bỏ ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}, còn ${getPresentGarmentSlots(nextTargetState).length} món.`;
 
-    const source = removalRequest.source;
-    const consumesSchedule = source === 'penalty' || (source === 'card' && !currentTriggerRef.current);
-    if (consumesSchedule) {
-      const targetIndex = removalRequest.targetIndex;
-      setDynamicClothingScheduler((current) => consumeScheduledRemoval(current, targetIndex));
-    }
     setRemovalRequest(null);
-    if (source === 'card') finalizeCardCompletion(true, nextOutfits);
-    else if (source === 'penalty') finalizeSkippedTurn(nextOutfits);
+    playRemovalScene([targetIndex], nextOutfits, announcement, () => {
+      onUpdateOutfits(nextOutfits);
+      onAddClothingRemovalEvent({
+        actorPlayerIndex: source === 'preparation' ? targetIndex : currentPlayerIndex,
+        targetPlayerIndex: targetIndex,
+        garmentSlot: slot,
+        garment: { styleId: garment.styleId, color: garment.color },
+        garmentId: garment.id,
+        action: 'removed',
+        source,
+        cardId: source === 'card' ? activeCard?.id : undefined,
+        round: currentRound,
+        timestamp: Date.now(),
+      });
+      if (source === 'penalty' || (source === 'card' && !currentTriggerRef.current)) {
+        setDynamicClothingScheduler((current) => consumeScheduledRemoval(current, targetIndex));
+      }
+      if (source === 'card') finalizeCardCompletion(true, nextOutfits);
+      else if (source === 'penalty') finalizeSkippedTurn(nextOutfits);
+    });
   };
 
   const handleContinueWithoutRemoval = () => {
@@ -1159,82 +1189,88 @@ export const GameTable: React.FC<GameTableProps> = ({
   };
 
   const handleConfirmDualRemoval = (firstSlot: GarmentSlot, secondSlot: GarmentSlot) => {
-    if (!activeCard || completionCommittedRef.current || !showDualRemovalDialog) return;
+    if (!activeCard || completionCommittedRef.current || !showDualRemovalDialog || scene) return;
     const result = removeGarmentsFromBoth(outfitStates, firstSlot, secondSlot);
     if (!result) {
       setLiveMessage('Trang phục đã thay đổi. Hãy chọn lại hai món có thể bỏ.');
       return;
     }
-    const now = Date.now();
-    onUpdateOutfits(result.outfits);
-    result.removed.forEach((garment, targetPlayerIndex) => {
-      onAddClothingRemovalEvent({
-        actorPlayerIndex: currentPlayerIndex,
-        targetPlayerIndex: targetPlayerIndex as PlayerIndex,
-        garmentSlot: garment.slot,
-        garment: { styleId: garment.styleId, color: garment.color },
-        garmentId: garment.id,
-        action: 'removed',
-        source: 'card',
-        cardId: activeCard.id,
-        round: currentRound,
-        timestamp: now,
-      });
-    });
+    const announcement = `${player1.name} và ${player2.name} mỗi người đã bỏ một món. Trang phục được cập nhật cùng lúc.`;
     setShowDualRemovalDialog(false);
-    // Fixed "both" cards never carry an injected trigger, so each removal
-    // consumes the next pending scheduled item of its player.
-    setDynamicClothingScheduler((current) => consumeScheduledRemoval(consumeScheduledRemoval(current, 0), 1));
-    setLiveMessage(`${player1.name} và ${player2.name} mỗi người đã bỏ một món. Trang phục được cập nhật cùng lúc.`);
-    finalizeCardCompletion(true, result.outfits);
+    playRemovalScene([0, 1], result.outfits, announcement, () => {
+      const now = Date.now();
+      onUpdateOutfits(result.outfits);
+      result.removed.forEach((garment, targetPlayerIndex) => {
+        onAddClothingRemovalEvent({
+          actorPlayerIndex: currentPlayerIndex,
+          targetPlayerIndex: targetPlayerIndex as PlayerIndex,
+          garmentSlot: garment.slot,
+          garment: { styleId: garment.styleId, color: garment.color },
+          garmentId: garment.id,
+          action: 'removed',
+          source: 'card',
+          cardId: activeCard.id,
+          round: currentRound,
+          timestamp: now,
+        });
+      });
+      // Fixed "both" cards never carry an injected trigger, so each removal
+      // consumes the next pending scheduled item of its player.
+      setDynamicClothingScheduler((current) => consumeScheduledRemoval(consumeScheduledRemoval(current, 0), 1));
+      finalizeCardCompletion(true, result.outfits);
+    });
   };
 
   const handleConfirmSwap = (firstSlot: GarmentSlot, secondSlot: GarmentSlot) => {
-    if (!activeCard) return;
+    if (!activeCard || scene) return;
     const result = swapGarments(outfitStates, firstSlot, secondSlot);
     if (!result) {
       setLiveMessage('Không thể đổi hai món đã chọn. Trang phục được giữ nguyên.');
       return;
     }
-    onUpdateOutfits(result.outfits);
-    const now = Date.now();
-    result.transferred.forEach((garment, fromIndex) => {
-      const targetPlayerIndex = fromIndex as PlayerIndex;
-      onAddClothingRemovalEvent({
-        actorPlayerIndex: currentPlayerIndex,
-        targetPlayerIndex,
-        toPlayerIndex: (targetPlayerIndex === 0 ? 1 : 0),
-        garmentSlot: garment.slot,
-        garment: { styleId: garment.styleId, color: garment.color },
-        garmentId: garment.id,
-        action: 'transferred',
-        source: 'card',
-        cardId: activeCard.id,
-        round: currentRound,
-        timestamp: now,
-      });
-    });
-    result.replaced.forEach((garment, targetIndex) => {
-      if (!garment) return;
-      onAddClothingRemovalEvent({
-        actorPlayerIndex: currentPlayerIndex,
-        targetPlayerIndex: targetIndex as PlayerIndex,
-        garmentSlot: garment.slot,
-        garment: { styleId: garment.styleId, color: garment.color },
-        garmentId: garment.id,
-        action: 'replaced',
-        source: 'card',
-        cardId: activeCard.id,
-        round: currentRound,
-        timestamp: now,
-      });
-    });
+    const announcement = `${player1.name} và ${player2.name} đã đổi ${GARMENT_LABELS[firstSlot].toLocaleLowerCase('vi')} với ${GARMENT_LABELS[secondSlot].toLocaleLowerCase('vi')}.`;
     setShowSwapDialog(false);
-    setLiveMessage(`${player1.name} và ${player2.name} đã đổi ${GARMENT_LABELS[firstSlot].toLocaleLowerCase('vi')} với ${GARMENT_LABELS[secondSlot].toLocaleLowerCase('vi')}.`);
-    finalizeCardCompletion(true, result.outfits);
+    playRemovalScene([0, 1], result.outfits, announcement, () => {
+      const now = Date.now();
+      onUpdateOutfits(result.outfits);
+      result.transferred.forEach((garment, fromIndex) => {
+        const targetPlayerIndex = fromIndex as PlayerIndex;
+        onAddClothingRemovalEvent({
+          actorPlayerIndex: currentPlayerIndex,
+          targetPlayerIndex,
+          toPlayerIndex: (targetPlayerIndex === 0 ? 1 : 0),
+          garmentSlot: garment.slot,
+          garment: { styleId: garment.styleId, color: garment.color },
+          garmentId: garment.id,
+          action: 'transferred',
+          source: 'card',
+          cardId: activeCard.id,
+          round: currentRound,
+          timestamp: now,
+        });
+      });
+      result.replaced.forEach((garment, targetIndex) => {
+        if (!garment) return;
+        onAddClothingRemovalEvent({
+          actorPlayerIndex: currentPlayerIndex,
+          targetPlayerIndex: targetIndex as PlayerIndex,
+          garmentSlot: garment.slot,
+          garment: { styleId: garment.styleId, color: garment.color },
+          garmentId: garment.id,
+          action: 'replaced',
+          source: 'card',
+          cardId: activeCard.id,
+          round: currentRound,
+          timestamp: now,
+        });
+      });
+      finalizeCardCompletion(true, result.outfits);
+    });
   };
 
-  const advanceNextTurn = () => {
+  const advanceNextTurn = (exit: CardExit) => {
+    releaseActionFocus();
+    setCardExit(exit);
     setClothingJourney((current) => advanceClothingTurn(current));
     soundEngine.stopTimerAlarm();
     didPlayTimerAlarmRef.current = false;
@@ -1270,10 +1306,13 @@ export const GameTable: React.FC<GameTableProps> = ({
     if (selection.finalCandidates && selection.finalCandidates.length > 0) {
       soundEngine.playShuffle();
       setDrawError(null);
+      setGainNotice(null);
       setDrawProbabilitySnapshot({ deck: 'position', probabilities: selection.probabilities });
       setFinalChoice({ candidates: selection.finalCandidates, flips: 1, revealedIds: [] });
       onJourneyPhaseChange('final');
-      setLiveMessage(`Lá cuối đã tới: chọn 1 trong ${selection.finalCandidates.length} lá Have Sex đang úp.`);
+      setLiveMessage(selection.finalCandidates.length === 1
+        ? 'Lá cuối đã tới: giữ lá bài để mở.'
+        : `Lá cuối đã tới: chọn 1 trong ${selection.finalCandidates.length} lá Have Sex đang úp.`);
       return;
     }
     const nextCard = selection.card;
@@ -1296,26 +1335,34 @@ export const GameTable: React.FC<GameTableProps> = ({
     setHasTimerStarted(false);
     setActiveCardWasRerolled(false);
     setActiveCard(null);
-    setIsRevealed(false);
+    setIsRevealed(!settings.privacyDefault);
     setCardFlipped(false);
-    setDrawState('shuffling');
     setDrawError(null);
+    setGainNotice(null);
     onSessionPositionCardIdsChange(selection.nextUsedCardIds);
     setDrawProbabilitySnapshot({ deck: 'position', probabilities: selection.probabilities });
-    soundEngine.playShuffle();
 
-    scheduleDrawStep(() => {
-      setActiveCard(nextCard);
-      setTimerSeconds(resolveCardTimerSeconds(nextCard));
-      setDrawState('drawing');
-      onDrawPositionCard(nextCard.id);
-      onJourneyPhaseChange(nextCard.position?.family === 'have_sex' ? 'final' : 'position');
-      scheduleDrawStep(() => {
+    startDrawSequence(
+      nextCard,
+      () => {
+        setActiveCard(nextCard);
+        setTimerSeconds(resolveCardTimerSeconds(nextCard));
+        setDrawState('drawing');
+        onDrawPositionCard(nextCard.id);
+        if (!settings.privacyDefault) onOpenPositionCard(nextCard.id);
+        onJourneyPhaseChange(nextCard.position?.family === 'have_sex' ? 'final' : 'position');
+      },
+      () => {
         setCardFlipped(true);
         setDrawState('drawn');
-        soundEngine.playCardFlip();
-      }, shouldReduceMotion ? 80 : 450);
-    }, shouldReduceMotion ? 100 : 750);
+      },
+    );
+  };
+
+  const handleDraw = () => {
+    if (drawState !== 'idle' || scene) return;
+    if (journeyPhase === 'standard') handleStartDraw();
+    else handlePositionDraw();
   };
 
   const sharedStarBalance = getSharedStarBalance(playerRewards);
@@ -1328,17 +1375,9 @@ export const GameTable: React.FC<GameTableProps> = ({
   const chooseFinalCard = (card: CardItem) => {
     setFinalChoice(null);
     completionCommittedRef.current = false;
-    soundEngine.playCardFlip();
-    if (!shouldReduceMotion) {
-      confetti({
-        particleCount: 90,
-        spread: 120,
-        startVelocity: 38,
-        origin: { y: 0.5 },
-        shapes: ['star'],
-        colors: ['#f7e7b0', '#e2c275', '#d7b1ff', '#fff4d6'],
-      });
-    }
+    soundEngine.playCompleteSound();
+    soundEngine.haptic([40, 50, 40, 50, 120]);
+    if (!reduceMotion) fireFinalConfetti();
     setActiveCard(card);
     setIsRevealed(true);
     setCardFlipped(true);
@@ -1384,12 +1423,8 @@ export const GameTable: React.FC<GameTableProps> = ({
     setLiveMessage(flips === 3 ? 'Đã lật cả 3 lá. Hãy chọn 1 lá.' : 'Hai bạn được lật 2 lá rồi chọn 1.');
   };
 
-  const handleFinalCardTap = (card: CardItem) => {
-    if (!finalChoice) return;
-    if (finalChoice.flips === 1) {
-      chooseFinalCard(card);
-      return;
-    }
+  const handleFlipFinalCard = (card: CardItem) => {
+    if (!finalChoice || finalChoice.flips === 1) return;
     if (finalChoice.revealedIds.includes(card.id) || finalChoice.revealedIds.length >= finalChoice.flips) return;
     soundEngine.playCardFlip();
     setFinalChoice({ ...finalChoice, revealedIds: [...finalChoice.revealedIds, card.id] });
@@ -1421,33 +1456,20 @@ export const GameTable: React.FC<GameTableProps> = ({
     completionCommittedRef.current = true;
     recordResolution(activeCard, 'skipped');
     soundEngine.playTick();
-    advanceNextTurn();
+    advanceNextTurn('skipped');
   };
 
   const preparationTargetIndex = ([0, 1] as const).find(
     (index) => getRemovableGarments(outfitStates[index]).length > 0,
-  );
-  const outfitsPrepared = outfitStates.every(
-    (outfit) => getPresentGarmentSlots(outfit).length === 0,
   );
   const handlePrepareNextGarment = () => {
     if (preparationTargetIndex === undefined) return;
     setRemovalRequest({ source: 'preparation', targetIndex: preparationTargetIndex });
   };
 
-  const isFavorited = activeCard ? favorites.includes(activeCard.id) : false;
-  const activeDeck = activeCard ? getCardDeck(activeCard) : 'standard';
-  const isPositionCard = activeDeck === 'position';
+  const isPositionCard = activeCard ? getCardDeck(activeCard) === 'position' : false;
   const isFinalPositionCard = activeCard?.position?.family === 'have_sex';
-  const isMythicPositionCard = isPositionCard && activeCard?.position?.rarity === 'mythic';
-  const activeIconScale = Math.min(1.8, Math.max(0.5, activeCard?.appearance?.iconScale ?? 1));
-  const activeTextScale = Math.min(1.5, Math.max(0.75, activeCard?.appearance?.textScale ?? 1));
-  const activeIconTextGap = Math.min(48, Math.max(0, activeCard?.appearance?.iconTextGap ?? 8));
-  const activeIconScaleStyle = { transform: `scale(${activeIconScale})` };
-  const activeIconSpacingStyle = {
-    marginTop: `${Math.max(0, activeIconScale - 1) * 24}px`,
-    marginBottom: `${activeIconTextGap + Math.max(0, activeIconScale - 1) * 16}px`,
-  };
+  const inPositionDeck = journeyPhase === 'position' || journeyPhase === 'final';
   const removalTargetIndices = activeCard ? getRemovalTargetIndices(activeCard, currentPlayerIndex) : [];
   const completionActionLabel = activeCard?.gameplayEffect?.kind === 'pass_turn'
     ? 'Chuyển lượt'
@@ -1459,6 +1481,7 @@ export const GameTable: React.FC<GameTableProps> = ({
         : `Chọn 1 món của ${removalTargetIndices[0] === 0 ? player1.name : player2.name}`
       : 'Đã hoàn thành';
   const heatLevel = (() => {
+    if (journeyPhase === 'position_consent') return 5;
     if (journeyPhase === 'standard') {
       const expected = DIFFICULTY_STARS.reduce((sum, star) => sum + star * drawProbabilities.stars[star], 0);
       return Math.min(5, Math.max(1, Math.round(expected || 1)));
@@ -1469,1103 +1492,341 @@ export const GameTable: React.FC<GameTableProps> = ({
     const expected = POSITION_DIFFICULTY_STARS.reduce((sum, star) => sum + star * stars[star], 0) / total;
     return Math.min(5, Math.max(1, Math.round(expected - 5)));
   })();
-  const clothingBanner = (() => {
+  const clothingNote = (() => {
     const effect = activeCard?.clothingEffect;
     if (!activeCard || !effect || getCardDeck(activeCard) === 'position') return null;
-    if (effect.kind === 'swap_garments') return 'Kèm theo: hai bạn đổi cho nhau 1 món đồ';
+    if (effect.kind === 'swap_garments') return 'Kèm theo: đổi cho nhau 1 món đồ';
     const targets = getRemovalTargetIndices(activeCard, currentPlayerIndex);
     if (targets.length === 2) return 'Kèm theo: mỗi người cởi 1 món đồ';
     if (targets.length === 0) return null;
     if (targets[0] === currentPlayerIndex) return `Kèm theo: ${currentPlayer.name} tự cởi 1 món đồ`;
     return `Kèm theo: cởi 1 món đồ của ${targets[0] === 0 ? player1.name : player2.name}`;
   })();
+  const turnLine = !activeCard
+    ? ''
+    : isFinalPositionCard
+      ? 'Lá cuối của hai bạn'
+      : isPositionCard
+        ? `Lượt của ${currentPlayer.name}`
+        : `${performingPlayer.name} ${activeCard.type === 'truth' ? 'trả lời' : 'thực hiện'}`;
   const canApplyPenaltyGarment = getRemovableGarments(outfitStates[performingPlayerIndex]).length > 0;
   const penaltyLockedReason = intimacyPercent < PENALTY_GARMENT_MIN_PERCENT
     ? `Trước mốc ${PENALTY_GARMENT_MIN_PERCENT}% Tim Hồng, bỏ qua không bị cởi đồ. Hai bạn có thể chọn một hình phạt nhẹ như một nụ hôn hoặc một câu hỏi thay thế.`
     : undefined;
 
-  return (
-    <div className="relative z-10 max-w-7xl mx-auto px-4 py-4 min-h-[92vh] flex flex-col justify-between">
-      {/* HEADER: Top Bar Stats & Controls */}
-      <div className="relative z-30 w-full flex flex-wrap items-center justify-between gap-3 glass-dark rounded-2xl px-4 py-3 border border-rose-500/20 shadow-lg">
-        {/* Current Turn Badge */}
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-xl shadow-md border"
-            style={{
-              borderColor: currentPlayerIndex === 0 ? '#FF6B9D' : '#D4AF37',
-              backgroundColor:
-                currentPlayerIndex === 0 ? 'rgba(255,107,157,0.15)' : 'rgba(212,175,55,0.15)',
-            }}
-          >
-            {currentPlayer.avatar}
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-neutral-400">
-              Đang tới lượt<span className="normal-case tracking-normal text-amber-200/80 sm:hidden"> · Lượt {currentRound}</span>
-            </div>
-            <div className="font-serif-romantic text-base font-bold text-white flex items-center gap-1.5">
-              <span className="max-w-[7.5rem] truncate sm:max-w-none">{currentPlayer.name}</span>
-              <span className={`w-2 h-2 rounded-full bg-emerald-400 inline-block ${shouldReduceMotion ? '' : 'animate-ping'}`} />
-            </div>
-          </div>
-        </div>
+  // What the middle of the table shows right now. Scripts read it from `data-game-state`.
+  const positionEmpty = inPositionDeck && !finalChoice && !activeCard && drawState === 'idle' && Boolean(drawError);
+  const tableState = journeyPhase === 'position_consent'
+    ? 'position-consent'
+    : inPositionDeck && finalChoice
+      ? 'final-choice'
+      : positionEmpty
+        ? 'position-empty'
+        : drawState === 'selecting_type'
+          ? 'choose'
+          : drawState === 'shuffling' || drawState === 'drawing'
+            ? 'moving'
+            : !activeCard
+              ? 'idle'
+              : !isRevealed
+                ? 'hidden'
+                : isFinalPositionCard
+                  ? 'final'
+                  : isPositionCard ? 'position' : 'answer';
+  const partnerIndex: PlayerIndex = currentPlayerIndex === 0 ? 1 : 0;
+  const partner = partnerIndex === 0 ? player1 : player2;
+  const boostPending = pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === partnerIndex);
+  const boostAffordable = playerRewards[currentPlayerIndex].starBalance >= DIFFICULTY_BOOST_STAR_COST;
+  const canDropCard = drawState === 'drawn' && activeCard !== null && !isFinalPositionCard;
 
-        {/* Round Progress Bar (phones show the round inside the turn badge) */}
-        <div className="hidden flex-col items-center sm:flex">
-          <div className="text-xs text-amber-200/90 font-medium mb-1 flex items-center gap-1">
-            <Trophy className="w-3.5 h-3.5 text-amber-400" />
-            <span>
-              Lượt {currentRound}
-              {settings.roundsMode === 'target' ? ` / ${settings.targetRounds}` : ''}
-            </span>
-          </div>
-          {settings.roundsMode === 'target' && (
-            <div className="w-28 sm:w-36 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gold-gradient transition-all duration-500"
-                style={{
-                  width: `${Math.min(100, (currentRound / settings.targetRounds) * 100)}%`,
-                }}
-              />
-            </div>
-          )}
-        </div>
+  const handleReveal = () => {
+    if (!activeCard) return;
+    releaseActionFocus();
+    soundEngine.playTick();
+    setIsRevealed(true);
+    if (isPositionCard) onOpenPositionCard(activeCard.id);
+  };
 
-        {/* Action Controls */}
-        <div className="ml-auto flex items-center gap-1.5 sm:ml-0 sm:gap-2">
-          <button
-            onClick={handleToggleMute}
-            aria-label={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
-            className="flex h-11 w-11 items-center justify-center rounded-xl bg-neutral-900/80 border border-neutral-700/60 text-neutral-300 hover:text-white transition-all"
-            title="Âm thanh"
-          >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-amber-400" />}
-          </button>
+  const handleDropCard = () => {
+    setShowPause(false);
+    if (!canDropCard) return;
+    if (isPositionCard) handlePositionAdvance(false);
+    else finalizeSkippedTurn();
+  };
 
-          <button
-            type="button"
-            onClick={onOpenRules}
-            disabled={navigationLocked}
-            aria-label="Cách chơi và luật phạt"
-            title="Cách chơi & luật phạt"
-            className="flex h-11 w-11 items-center justify-center rounded-xl bg-neutral-900/80 border border-neutral-700/60 text-rose-300 hover:border-rose-400/50 hover:text-rose-100 transition-all"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
+  const openPause = useCallback(() => setShowPause(true), []);
+  useTableShortcuts(!isPaused && scene === null, () => { if (!navigationLocked) openPause(); });
 
-          <button
-            onClick={onOpenCollection}
-            disabled={navigationLocked}
-            aria-label="Mở bộ sưu tập thẻ"
-            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-amber-300 hover:text-amber-100 transition-all text-xs"
-          >
-            <BookOpen className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">Bộ sưu tập</span>
-          </button>
+  // The button a player needs next gets the focus when the old one is gone,
+  // so the whole game can be played with Space or Enter.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isPaused || scene) return;
+    const focusMainAction = () => {
+      if (isDialogOpen() || (document.activeElement && document.activeElement !== document.body)) return;
+      const button = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-main-action]') ?? [])]
+        .find((element) => element.getClientRects().length > 0);
+      button?.focus({ preventScroll: true });
+    };
+    const frame = window.requestAnimationFrame(focusMainAction);
+    // Again once a closing dialog has finished and let go of the focus.
+    const timeout = window.setTimeout(focusMainAction, 450);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [tableState, hasTimerStarted, currentRound, isPaused, scene]);
 
-          <button
-            onClick={onOpenSummary}
-            disabled={navigationLocked}
-            aria-label="Mở tổng kết và thống kê"
-            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-rose-950/60 px-3 border border-rose-500/30 text-rose-300 hover:text-rose-100 transition-all text-xs"
-          >
-            <Trophy className="w-4 h-4 text-rose-400" />
-            <span className="hidden sm:inline">Thống kê</span>
-          </button>
+  // Clicks right after the table changes are ignored, so a double click never does two things.
+  const lastChangeRef = useRef(0);
+  useLayoutEffect(() => {
+    lastChangeRef.current = performance.now();
+  }, [tableState, currentRound, hasTimerStarted]);
+  const guarded = (action: () => void) => () => {
+    if (performance.now() - lastChangeRef.current >= TABLE_TIMING.actionGuard) action();
+  };
 
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('Kết thúc ván ngay bây giờ? Hai bạn sẽ xem tổng kết của ván này.')) onFinishGame('manual');
-            }}
-            disabled={navigationLocked}
-            aria-label="Kết thúc ván"
-            title="Kết thúc ván"
-            className="hidden sm:flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-3 border border-neutral-700/60 text-neutral-300 hover:text-white transition-all text-xs disabled:opacity-40"
-          >
-            <Flag className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Kết thúc</span>
-          </button>
+  const renderPanel = (index: PlayerIndex, mobile = false) => (
+    <PlayerPanel
+      player={index === 0 ? player1 : player2}
+      outfitState={displayOutfits[index]}
+      rewardState={playerRewards[index]}
+      hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === index)}
+      active={currentPlayerIndex === index}
+      mood={figureMood}
+      spotlit={scene?.targets.includes(index) ?? false}
+      mobile={mobile}
+    />
+  );
 
-          {onOpenAccountModal && (
-            <button
-              type="button"
-              onClick={onOpenAccountModal}
-              disabled={navigationLocked}
-              aria-label="Tài khoản và đồng bộ"
-              title={coupleName ? `Tài khoản: ${coupleName}` : 'Đăng nhập tài khoản'}
-              className="hidden sm:flex h-11 items-center justify-center gap-1.5 rounded-xl bg-neutral-900/80 px-2.5 border border-rose-500/30 text-rose-200 hover:border-rose-400 hover:text-white transition-all text-xs cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span className="hidden lg:inline max-w-[110px] truncate">{coupleName || 'Tài khoản'}</span>
-            </button>
-          )}
-
-          <div ref={moreMenuRef} className="relative sm:hidden">
-            <button
-              type="button"
-              onClick={() => setShowMoreMenu((open) => !open)}
-              aria-expanded={showMoreMenu}
-              aria-haspopup="menu"
-              className="flex h-11 items-center gap-1.5 rounded-xl border border-neutral-700/60 bg-neutral-900/80 px-3 text-xs font-semibold text-neutral-200"
-            >
-              <Ellipsis className="h-4 w-4" aria-hidden="true" /> Thêm
-            </button>
-            <AnimatePresence>
-              {showMoreMenu && (
-                <motion.div
-                  role="menu"
-                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.16 }}
-                  className="absolute right-0 top-[calc(100%+8px)] z-[60] w-56 overflow-hidden rounded-2xl border border-white/12 bg-[#171014]/98 p-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl"
-                >
-                  {[
-                    { label: 'Bộ sưu tập thẻ', icon: BookOpen, tone: 'text-amber-300', onSelect: onOpenCollection },
-                    { label: 'Thống kê ván', icon: Trophy, tone: 'text-rose-300', onSelect: onOpenSummary },
-                    ...(onOpenAccountModal ? [{ label: coupleName ? `Tài khoản · ${coupleName}` : 'Tài khoản', icon: ShieldCheck, tone: 'text-emerald-400', onSelect: onOpenAccountModal }] : []),
-                    {
-                      label: 'Kết thúc ván',
-                      icon: Flag,
-                      tone: 'text-neutral-300',
-                      onSelect: () => {
-                        if (window.confirm('Kết thúc ván ngay bây giờ? Hai bạn sẽ xem tổng kết của ván này.')) onFinishGame('manual');
-                      },
-                    },
-                  ].map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.label}
-                        type="button"
-                        role="menuitem"
-                        disabled={navigationLocked}
-                        onClick={() => {
-                          setShowMoreMenu(false);
-                          item.onSelect();
-                        }}
-                        className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm text-neutral-100 hover:bg-white/[0.06] disabled:opacity-40"
-                      >
-                        <Icon className={`h-4 w-4 shrink-0 ${item.tone}`} aria-hidden="true" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-      </div>
-
-      <section className="mt-3 px-1" aria-label="Tiến trình thân mật hai giai đoạn">
-        <div className="mb-1.5 flex items-end justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <motion.span
-              key={journeyGain?.id ?? 'heart'}
-              className="relative grid h-8 w-8 place-items-center"
-              aria-hidden="true"
-              initial={false}
-              animate={journeyGain && !shouldReduceMotion ? { scale: [1, 1.32, 0.94, 1.08, 1] } : { scale: 1 }}
-              transition={{ duration: 0.75, ease: 'easeOut' }}
-            >
-              <Heart className="absolute h-7 w-7 fill-rose-500/80 text-rose-300 drop-shadow-[0_0_8px_rgba(251,113,133,.45)]" />
-              {journeyPhase !== 'standard' && (
-                <Heart className="absolute h-5 w-5 fill-[#d7b1ff]/35 text-[#f0d7ff] drop-shadow-[0_0_7px_rgba(232,164,140,.55)]" />
-              )}
-            </motion.span>
-            <div>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/75">Hành trình thân mật</span>
-              <p className="mt-0.5 text-[10px] text-neutral-500">
-                {journeyPhase === 'standard' ? 'Lấp đầy tim hồng để mở Bộ Tư thế' : 'Bộ Tư thế · lấp đầy để tới lá cuối'}
-              </p>
-            </div>
-          </div>
-          <span className="relative">
-            <AnimatePresence>
-              {journeyGain && (
-                <motion.span
-                  key={journeyGain.id}
-                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.8 }}
-                  animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: -18, scale: 1 }}
-                  exit={{ opacity: 0, y: shouldReduceMotion ? 0 : -30 }}
-                  transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                  className={`pointer-events-none absolute right-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-black ${journeyPhase === 'standard' ? 'bg-rose-500/25 text-rose-100' : 'bg-[#d7b1ff]/20 text-[#f4e8ff]'}`}
-                  aria-hidden="true"
-                >
-                  +{journeyGain.amount}%
-                </motion.span>
-              )}
-            </AnimatePresence>
-            <strong className={`font-serif-romantic text-xl tabular-nums ${journeyPhase === 'standard' ? 'text-rose-200' : 'text-[#f1d6ff]'}`}>
-              {displayedJourneyPercent}%
-            </strong>
-          </span>
-        </div>
-        <div className="relative h-3 overflow-hidden rounded-full border border-white/10 bg-black/35">
-          <motion.div
-            initial={false}
-            animate={{ width: `${intimacyPercent}%` }}
-            transition={{ duration: shouldReduceMotion ? 0.08 : 0.7, ease: 'easeOut' }}
-            role="progressbar"
-            aria-label={`Tim hồng ${intimacyPercent} phần trăm`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={intimacyPercent}
-            className="progress-shimmer absolute inset-y-0 left-0 rounded-full bg-[#f9a8d4]"
-            style={{ boxShadow: `0 0 ${6 + intimacyPercent * 0.14}px rgba(249,168,212,${0.2 + intimacyPercent * 0.004})` }}
+  const renderActions = () => {
+    if (scene) return <TableActions state="none" />;
+    switch (tableState) {
+      case 'idle':
+        return (
+          <TableActions
+            state="idle"
+            deck={inPositionDeck ? 'position' : 'standard'}
+            playerName={currentPlayer.name}
+            boost={!inPositionDeck && (boostAffordable || boostPending)
+              ? { targetName: partner.name, pending: boostPending, affordable: boostAffordable }
+              : null}
+            onDraw={guarded(handleDraw)}
+            onBoost={guarded(handleQueueDifficultyBoost)}
           />
-          {journeyPhase !== 'standard' && (
-            <motion.div
-              initial={false}
-              animate={{ width: `${luxuryIntimacyPercent}%` }}
-              transition={{ duration: shouldReduceMotion ? 0.08 : 0.8, ease: 'easeOut' }}
-              role="progressbar"
-              aria-label={`Tim Luxury ${luxuryIntimacyPercent} phần trăm`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={luxuryIntimacyPercent}
-              className="luxury-heart-fill absolute inset-y-0 left-0 rounded-full bg-[linear-gradient(90deg,#e8a48c,#d7b1ff,#f4e8ff,#cda95c)] shadow-[0_0_20px_rgba(215,177,255,.5)]"
-            />
-          )}
-        </div>
-      </section>
+        );
+      case 'choose':
+        return <TableActions state="choose" onBack={guarded(() => setDrawState('idle'))} />;
+      case 'moving':
+        return (
+          <TableActions
+            state="moving"
+            text={inPositionDeck ? `Đang chọn lá cho ${currentPlayer.name}…` : 'Đang xáo bài…'}
+            onSkip={skipDrawSequence}
+          />
+        );
+      case 'hidden':
+        return <TableActions state="hidden" luxury={isPositionCard} onReveal={guarded(handleReveal)} />;
+      case 'answer':
+        return (
+          <TableActions
+            state="answer"
+            startSeconds={timerSeconds !== null && !hasTimerStarted ? timerSeconds : null}
+            skipLabel={activeCard?.type === 'truth' ? 'Không trả lời' : 'Không thực hiện'}
+            completeLabel={completionActionLabel}
+            reroll={{
+              playerName: performingPlayer.name,
+              balance: playerRewards[performingPlayerIndex].starBalance,
+              used: activeCardWasRerolled,
+            }}
+            onSkip={guarded(handleSkip)}
+            onStart={guarded(handleTimerControl)}
+            onComplete={guarded(handleComplete)}
+            onReroll={guarded(handleReroll)}
+          />
+        );
+      case 'position':
+        return (
+          <TableActions
+            state="position"
+            completeLabel={completionActionLabel}
+            onSkip={guarded(() => handlePositionAdvance(false))}
+            onComplete={guarded(() => handlePositionAdvance(true))}
+          />
+        );
+      case 'final':
+        return <TableActions state="final" onFinish={guarded(handleComplete)} />;
+      default:
+        return <TableActions state="none" />;
+    }
+  };
 
-      <section
-        aria-label="Độ nóng của lượt hiện tại"
-        className="mt-3 border-b border-white/[0.07] px-1 pb-3 text-[10px] text-neutral-400 sm:text-xs"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-          <div className="flex items-center gap-2 font-semibold text-neutral-300">
-            <Flame className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
-            <span>{drawProbabilitySnapshot ? 'Độ nóng lúc rút' : 'Độ nóng lượt này'}</span>
-            <span className="flex items-center gap-1" role="img" aria-label={`Độ nóng ${heatLevel} trên 5`}>
-              {[1, 2, 3, 4, 5].map((pip) => (
-                <span
-                  key={pip}
-                  className={`h-1.5 w-4 rounded-full ${pip <= heatLevel ? 'bg-gradient-to-r from-amber-300 to-rose-400' : 'bg-white/10'}`}
-                />
-              ))}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {journeyPhase === 'standard' ? (
-              <>
-                {activeDifficultyBoost && (
-                  <span className="rounded-full border border-orange-300/30 bg-orange-500/10 px-2 py-0.5 font-bold text-orange-200">
-                    Tăng khó +1 bậc
-                  </span>
-                )}
-              </>
-            ) : (
-              <span className={`rounded-full border border-[#e8a48c]/25 bg-[#e8a48c]/10 px-2 py-0.5 text-xs font-bold text-[#f4e8ff] ${(luxuryDrawProbabilities?.finalCardChance ?? 0) <= 0 ? 'opacity-35' : ''}`}>
-                Have Sex <strong>{chance(luxuryDrawProbabilities?.finalCardChance ?? 0)}</strong>
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowOddsDetails((value) => !value)}
-              aria-expanded={showOddsDetails}
-              className="flex h-8 items-center gap-1 rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-white/25 hover:text-white"
-            >
-              <Info className="h-3 w-3" aria-hidden="true" />
-              {showOddsDetails ? 'Ẩn tỉ lệ' : 'Tỉ lệ'}
-            </button>
-          </div>
-        </div>
-        {showOddsDetails && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
-            {journeyPhase === 'standard' && (
-              <>
-                <span className="text-xs font-semibold">Sự thật <strong className="text-blue-200">{chance(drawProbabilities.types.truth)}</strong></span>
-                <span className="text-xs font-semibold">Thử thách <strong className="text-rose-200">{chance(drawProbabilities.types.dare)}</strong></span>
-                <span className="h-3 w-px bg-white/15" aria-hidden="true" />
-              </>
-            )}
-            {journeyPhase === 'standard'
-              ? DIFFICULTY_STARS.map((star) => (
-                <span key={star} className={`text-xs font-semibold ${drawProbabilities.stars[star] <= 0 ? 'opacity-35' : ''}`}>
-                  {star}★ <strong className="text-amber-200">{chance(drawProbabilities.stars[star])}</strong>
-                </span>
-              ))
-              : POSITION_DIFFICULTY_STARS.map((star) => (
-                <span key={star} className={`text-xs font-semibold ${(luxuryDrawProbabilities?.stars[star] ?? 0) <= 0 ? 'opacity-25' : ''}`}>
-                  {star}★ <strong className="text-[#ead2ff]">{chance(luxuryDrawProbabilities?.stars[star] ?? 0)}</strong>
-                </span>
-              ))}
-          </div>
-        )}
-      </section>
+  const toast = drawError && !positionEmpty
+    ? { tone: 'warning' as const, text: drawError }
+    : gainNotice && drawState === 'idle' && !scene
+      ? { tone: 'gain' as const, text: gainNotice.text, unlocked: gainNotice.unlocked }
+      : null;
+
+  return (
+    <div
+      ref={rootRef}
+      className="game-root"
+      data-game-state={scene ? 'scene' : tableState}
+      data-phase={journeyPhase}
+      data-scene={scene ? '' : undefined}
+      data-focus={drawState === 'drawn' && !scene ? '' : undefined}
+    >
+      <GameHeader
+        player={currentPlayer}
+        playerIndex={currentPlayerIndex}
+        round={currentRound}
+        targetRounds={settings.roundsMode === 'target' ? settings.targetRounds : null}
+        journeyPhase={journeyPhase}
+        intimacyPercent={intimacyPercent}
+        luxuryPercent={luxuryIntimacyPercent}
+        heatLevel={heatLevel}
+        oddsAreForOpenCard={drawProbabilitySnapshot !== null}
+        drawProbabilities={drawProbabilities}
+        luxuryProbabilities={luxuryDrawProbabilities}
+        difficultyBoostActive={activeDifficultyBoost !== null}
+        locked={navigationLocked}
+        isMuted={isMuted}
+        coupleName={coupleName}
+        reduceMotion={reduceMotion}
+        onToggleMute={handleToggleMute}
+        onOpenRules={onOpenRules}
+        onOpenCollection={onOpenCollection}
+        onOpenSummary={onOpenSummary}
+        onOpenAccount={onOpenAccountModal}
+        onPause={openPause}
+        onEnd={() => setShowEndConfirm(true)}
+      />
 
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {drawError || liveMessage || `${currentPlayer.name} đang tới lượt, còn ${getPresentGarmentSlots(outfitStates[currentPlayerIndex]).length} món đồ.`}
       </p>
 
-      {drawError && (
-        <div className="mx-auto mt-3 max-w-xl rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5 text-center text-xs font-medium text-amber-200" role="status">
-          {drawError}
-        </div>
-      )}
-
-      <AnimatePresence>
-        {(unlockNotice || intimacyGainNotice) && (
-          <motion.div
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            role="status"
-            className="mx-auto mt-3 flex max-w-md items-center gap-2 rounded-full border border-emerald-400/35 bg-emerald-950/80 px-4 py-2 text-xs font-semibold text-emerald-100 shadow-[0_0_22px_rgba(52,211,153,.12)]"
-          >
-            <LockOpen className="h-4 w-4 shrink-0 text-emerald-300" />
-            {intimacyGainNotice || unlockNotice}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="game-toast">
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.text}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(-8px)' }}
+              animate={{ opacity: 1, transform: 'translateY(0px)' }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: DURATION.fast, ease: EASE_OUT }}
+              role="status"
+              className={`flex max-w-md items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-[0_12px_40px_rgba(0,0,0,.5)] ${
+                toast.tone === 'warning'
+                  ? 'border-amber-300/45 bg-[#2a1a08] text-amber-100'
+                  : 'border-rose-300/40 bg-[#2b101b] text-rose-50'
+              }`}
+            >
+              {toast.tone === 'warning'
+                ? <TriangleAlert className="h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
+                : <Heart className="h-4 w-4 shrink-0 fill-rose-400/70 text-rose-300" aria-hidden="true" />}
+              <span>{toast.text}</span>
+              {toast.tone === 'gain' && toast.unlocked && (
+                <span className="flex shrink-0 items-center gap-1 text-emerald-200">
+                  <LockOpen className="h-4 w-4" aria-hidden="true" /> Lá mới
+                </span>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       <div className="game-outfit-mobile" aria-label="Trang phục hiện tại của hai người chơi">
-        <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} mood={figureMood} mobile />
-        <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} mood={figureMood} mobile />
+        {renderPanel(0, true)}
+        {renderPanel(1, true)}
       </div>
 
-      {/* MAIN GAME TABLE AREA */}
-      <div className="game-table-stage my-auto py-6">
-        <div className="game-outfit-desktop">
-          <PlayerOutfitStatus player={player1} outfitState={outfitStates[0]} rewardState={playerRewards[0]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 0)} active={currentPlayerIndex === 0} mood={figureMood} />
-        </div>
-        <div className="game-table-stage__center">
-        {journeyPhase === 'position_consent' && (
-          <motion.section
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            aria-labelledby="position-consent-title"
-            className="position-gate w-full max-w-md overflow-hidden rounded-[1.75rem] border border-[#e2c275]/40 bg-[linear-gradient(160deg,rgba(7,11,24,.98),rgba(16,34,64,.94))] p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,.45)]"
-          >
-            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full border border-[#e2c275]/50 bg-[#e2c275]/10 text-2xl text-[#f7e7b0]">
-              ✦
+      <div className="game-stage">
+        <div className="game-stage__side">{renderPanel(0)}</div>
+
+        <div className="game-stage__center">
+          {tableState === 'position-consent' ? (
+            <div className="table-span">
+              <PositionConsent
+                players={[player1, player2]}
+                outfitStates={displayOutfits}
+                nextToPrepare={preparationTargetIndex === undefined ? null : preparationTargetIndex === 0 ? player1.name : player2.name}
+                reduceMotion={reduceMotion}
+                onPrepare={guarded(handlePrepareNextGarment)}
+                onFinish={guarded(() => onFinishGame('pink_complete'))}
+                onEnter={guarded(handleEnterPositionJourney)}
+              />
             </div>
-            <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.24em] text-[#e2c275]/75">Mốc 100%</p>
-            <h2 id="position-consent-title" className="mt-2 font-serif-romantic text-3xl font-bold text-[#fff4d6]">
-              Bộ Tư thế đã mở
-            </h2>
-            <p className="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-slate-300">
-              Chỉ tiếp tục nếu cả hai vẫn tự nguyện. Mỗi lá đều có thể bỏ qua, đổi ý hoặc dừng mà không bị phạt.
-            </p>
-            <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-3 text-left">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e2c275]/75">Chuẩn bị trước khi tiếp tục</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-                <span>{player1.name}: <strong className="text-white">{getPresentGarmentSlots(outfitStates[0]).length} món</strong></span>
-                <span>{player2.name}: <strong className="text-white">{getPresentGarmentSlots(outfitStates[1]).length} món</strong></span>
+          ) : tableState === 'final-choice' && finalChoice ? (
+            <div className="table-span">
+              <FinalChoice
+                choice={finalChoice}
+                sharedStarBalance={sharedStarBalance}
+                flipThreeCost={finalFlipCost(3, finalChoice.flips)}
+                reduceMotion={reduceMotion}
+                onFlip={handleFlipFinalCard}
+                onBuyFlips={handleBuyFinalFlips}
+                onChoose={chooseFinalCard}
+              />
+            </div>
+          ) : tableState === 'position-empty' ? (
+            <div className="table-span">
+              <PositionEmpty
+                message={drawError ?? ''}
+                onPass={guarded(() => advanceNextTurn('skipped'))}
+                onFinish={guarded(() => onFinishGame('no_cards'))}
+              />
+            </div>
+          ) : (
+            <>
+              <div
+                className="table-slot"
+                data-card-slot
+                data-moving={tableState === 'moving' ? '' : undefined}
+                onClick={tableState === 'moving' ? skipDrawSequence : undefined}
+              >
+                <TableDeck
+                  kind={inPositionDeck ? 'position' : 'standard'}
+                  phase={drawState === 'idle' ? 'idle' : drawState === 'shuffling' ? 'shuffling' : tableState === 'final' ? 'gone' : 'behind'}
+                  onDraw={guarded(handleDraw)}
+                />
+                <AnimatePresence custom={{ exit: cardExit, reduceMotion }}>
+                  {activeCard && (drawState === 'drawing' || drawState === 'drawn') && (
+                    <TableCard
+                      key={`${activeCard.id}:${currentRound}`}
+                      card={activeCard}
+                      flipped={cardFlipped}
+                      quickFlip={quickFlip}
+                      revealed={revealedCard !== null}
+                      favorite={favorites.includes(activeCard.id)}
+                      turnLine={turnLine}
+                      clothingNote={clothingNote}
+                      revealHint={`Lá bài đang úp để không ai đọc trước. Mở khi ${isPositionCard ? 'cả hai' : performingPlayer.name} đã sẵn sàng.`}
+                      timer={timerSeconds === null ? null : { seconds: timerSeconds, started: hasTimerStarted, running: isTimerRunning }}
+                      reduceMotion={reduceMotion}
+                      onToggleFavorite={() => onToggleFavorite(activeCard.id)}
+                      onTimerControl={guarded(handleTimerControl)}
+                    />
+                  )}
+                </AnimatePresence>
+                {sparkId > 0 && <CardSpark key={sparkId} />}
+                {tableState === 'choose' && (
+                  <ChooseType
+                    playerName={currentPlayer.name}
+                    truthLockedReason={truthLockedReason}
+                    dareAvailable={availableDrawTypes.includes('dare')}
+                    reduceMotion={reduceMotion}
+                    onChoose={(type) => guarded(() => executeDrawCard(type))()}
+                  />
+                )}
+                <TurnStrip player={currentPlayer} round={currentRound} visible={tableState === 'idle'} reduceMotion={reduceMotion} />
               </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-                Bỏ từng món theo đúng lớp và xác nhận. Đây chỉ là trạng thái của ván hiện tại, không thay đổi trang phục mặc định.
-              </p>
-              {!outfitsPrepared && (
-                <button
-                  type="button"
-                  onClick={handlePrepareNextGarment}
-                  className="mt-3 min-h-11 w-full rounded-full border border-[#e2c275]/35 bg-[#e2c275]/10 px-4 text-xs font-semibold text-[#fff4d6] transition-colors hover:bg-[#e2c275]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0]"
-                >
-                  Chọn món tiếp theo của {preparationTargetIndex === 0 ? player1.name : player2.name}
-                </button>
-              )}
-              {outfitsPrepared && (
-                <p role="status" className="mt-3 text-center text-xs font-semibold text-emerald-200">✓ Cả hai đã sẵn sàng</p>
-              )}
-            </div>
-            <div className="mt-6 grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => onFinishGame('pink_complete')}
-                className="min-h-12 rounded-full border border-white/15 bg-black/20 px-4 text-xs font-semibold text-slate-300 transition-colors hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-              >
-                Kết thúc tại đây
-              </button>
-              <button
-                type="button"
-                onClick={handleEnterPositionJourney}
-                disabled={!outfitsPrepared}
-                className="btn-shine min-h-12 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-4 text-xs font-bold text-[#08101f] shadow-[0_0_24px_rgba(226,194,117,.25)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transform-none"
-              >
-                Cả hai đồng ý, tiếp tục
-              </button>
-            </div>
-            <p className="mt-4 text-[10px] font-medium text-[#f7e7b0]/65">Nghe “Dừng” là dừng ngay.</p>
-          </motion.section>
-        )}
-
-        {(journeyPhase === 'position' || journeyPhase === 'final') && finalChoice && (
-          <motion.section
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="w-full max-w-2xl text-center"
-            aria-labelledby="final-choice-title"
-          >
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#e2c275]/75">Lá cuối · Have Sex</p>
-            <h2 id="final-choice-title" className="mt-2 font-serif-romantic text-2xl font-bold text-[#fff4d6] sm:text-3xl">
-              {finalChoice.flips === 1
-                ? `Chọn 1 trong ${finalChoice.candidates.length} lá đang úp`
-                : finalChoice.flips === 2
-                  ? 'Lật 2 lá rồi chọn 1'
-                  : 'Chọn 1 trong 3 lá đã lật'}
-            </h2>
-            <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-300">
-              {finalChoice.flips === 1
-                ? 'Chạm vào một lá úp: lá đó là lá cuối của hai bạn. Muốn xem trước, hãy dùng sao trong ví chung để lật.'
-                : finalChoice.flips === 2 && finalChoice.revealedIds.length < 2
-                  ? `Chạm để lật thêm ${2 - finalChoice.revealedIds.length} lá, rồi bấm "Chọn lá này" dưới lá hai bạn muốn.`
-                  : finalChoice.flips === 2
-                    ? 'Đã lật 2 lá. Bấm "Chọn lá này" dưới lá hai bạn muốn.'
-                    : 'Cả ba lá đã lật. Bấm "Chọn lá này" dưới lá hai bạn muốn.'}
-            </p>
-            <div className="mt-5 grid grid-cols-3 gap-3 sm:gap-5">
-              {finalChoice.candidates.map((card, index) => {
-                const revealed = finalChoice.revealedIds.includes(card.id);
-                const canFlip = finalChoice.flips === 1
-                  || (!revealed && finalChoice.revealedIds.length < finalChoice.flips);
-                const FinalIcon = getCardIcon(card.icon || autoAssignIcon(card.content));
-                return (
-                  <div key={card.id} className="flex flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleFinalCardTap(card)}
-                      disabled={!canFlip}
-                      aria-label={revealed ? `Lá ${index + 1}: ${finalCardTitle(card)}` : `Lá úp số ${index + 1}`}
-                      className="luxury-deck relative h-44 w-full max-w-[9.5rem] rounded-[1.1rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] disabled:cursor-default sm:h-56"
-                    >
-                      {revealed ? (
-                        <span className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[1.1rem] border border-[#e2c275]/45 bg-[linear-gradient(160deg,rgba(20,12,30,.97),rgba(45,24,52,.93))] p-2.5">
-                          {card.customImage ? (
-                            <img src={card.customImage} alt="" className="h-20 w-20 object-contain sm:h-24 sm:w-24" />
-                          ) : FinalIcon ? (
-                            <span className="card-icon-color h-16 w-16 sm:h-20 sm:w-20"><FinalIcon className="h-full w-full" /></span>
-                          ) : null}
-                          <span className="text-[11px] font-semibold leading-snug text-[#fff4d6] sm:text-xs">{finalCardTitle(card)}</span>
-                          <span className="text-[10px] font-semibold text-[#e2c275]">{derivePositionDifficultyStars(card)}★</span>
-                        </span>
-                      ) : (
-                        <span className="luxury-deck__face" aria-hidden="true">
-                          <span className="luxury-deck__inner">
-                            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#e2c275]/75">Have Sex</span>
-                            <span className="luxury-deck__seal">✦</span>
-                            <span className="font-serif-romantic text-sm font-semibold text-[#fff4d6]">{index + 1}</span>
-                          </span>
-                        </span>
-                      )}
-                    </button>
-                    {revealed && finalChoice.flips > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => chooseFinalCard(card)}
-                        className="min-h-10 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-3 text-[11px] font-bold text-[#08101f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fff4d6]"
-                      >
-                        Chọn lá này
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-              <span className="text-[11px] text-slate-300">
-                Ví chung: <strong className="text-amber-200">{sharedStarBalance}★</strong>
-              </span>
-              {finalChoice.flips < 2 && finalChoice.candidates.length >= 2 && (
-                <button
-                  type="button"
-                  onClick={() => handleBuyFinalFlips(2)}
-                  disabled={sharedStarBalance < FINAL_FLIP_TWO_STAR_COST}
-                  className="min-h-11 rounded-full border border-[#e2c275]/35 bg-[#e2c275]/10 px-4 text-xs font-semibold text-[#fff4d6] transition-colors hover:bg-[#e2c275]/15 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Lật 2 lá · {FINAL_FLIP_TWO_STAR_COST}★
-                </button>
-              )}
-              {finalChoice.flips < 3 && finalChoice.candidates.length >= 3 && (
-                <button
-                  type="button"
-                  onClick={() => handleBuyFinalFlips(3)}
-                  disabled={sharedStarBalance < finalFlipCost(3, finalChoice.flips)}
-                  className="min-h-11 rounded-full border border-[#e2c275]/35 bg-[#e2c275]/10 px-4 text-xs font-semibold text-[#fff4d6] transition-colors hover:bg-[#e2c275]/15 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {finalChoice.flips === 2
-                    ? `Lật lá còn lại · ${finalFlipCost(3, 2)}★`
-                    : `Lật cả 3 lá · ${FINAL_FLIP_THREE_STAR_COST}★`}
-                </button>
-              )}
-            </div>
-          </motion.section>
-        )}
-
-        {(journeyPhase === 'position' || journeyPhase === 'final') && !finalChoice && !activeCard && drawState === 'idle' && drawError && (
-          <section className="w-full max-w-md rounded-[1.5rem] border border-[#d7b1ff]/25 bg-[linear-gradient(160deg,rgba(10,12,25,.96),rgba(35,20,46,.9))] p-6 text-center" aria-labelledby="position-empty-title">
-            <Heart className="mx-auto h-10 w-10 text-[#e8a48c]" aria-hidden="true" />
-            <h2 id="position-empty-title" className="mt-3 font-serif-romantic text-2xl font-bold text-[#f1d6ff]">Chưa có lá phù hợp</h2>
-            <p className="mt-2 text-xs leading-relaxed text-neutral-400">{drawError}</p>
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
-              <button type="button" onClick={advanceNextTurn} className="min-h-12 rounded-full border border-[#d7b1ff]/25 px-4 text-xs font-semibold text-[#ead2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d7b1ff]">Chuyển lượt</button>
-              <button type="button" onClick={() => onFinishGame('no_cards')} className="min-h-12 rounded-full bg-[linear-gradient(135deg,#f4e8ff,#e8a48c)] px-4 text-xs font-bold text-[#120717] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f4e8ff]">Kết thúc ván</button>
-            </div>
-          </section>
-        )}
-
-        {(journeyPhase === 'position' || journeyPhase === 'final') && !finalChoice && !activeCard && drawState === 'idle' && !drawError && (
-          <motion.section
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="flex w-full max-w-md flex-col items-center text-center"
-            aria-labelledby="luxury-deck-title"
-          >
-            <button
-              type="button"
-              onClick={handlePositionDraw}
-              className="luxury-deck group relative my-5 h-80 w-56 cursor-pointer rounded-[1.4rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] sm:h-[23rem] sm:w-64"
-              aria-label={`${currentPlayer.name} rút một lá Tư thế`}
-            >
-              <span className="luxury-deck__card luxury-deck__card--left" aria-hidden="true" />
-              <span className="luxury-deck__card luxury-deck__card--right" aria-hidden="true" />
-              <motion.span
-                whileHover={shouldReduceMotion ? undefined : { y: -9, scale: 1.018 }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
-                className="luxury-deck__face"
-                aria-hidden="true"
-              >
-                <span className="luxury-deck__inner">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#e2c275]/75">Luxury journey</span>
-                  <span className="luxury-deck__seal">✦</span>
-                  <span className="font-serif-romantic text-sm font-semibold tracking-[0.18em] text-[#fff4d6]">TƯ THẾ</span>
-                </span>
-              </motion.span>
-            </button>
-            <p id="luxury-deck-title" className="text-sm text-slate-300">
-              Đến lượt <strong className="text-[#f7e7b0]">{currentPlayer.name}</strong> rút thẻ dành cho {currentPlayerIndex === 0 ? 'Nam' : 'Nữ'} hoặc Cả hai
-            </p>
-            <button
-              type="button"
-              onClick={handlePositionDraw}
-              className="btn-shine mt-5 flex min-h-12 items-center gap-2 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-8 text-sm font-bold text-[#08101f] shadow-[0_0_26px_rgba(226,194,117,.24)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fff4d6] motion-reduce:transform-none"
-            >
-              <Sparkles className="h-4 w-4" aria-hidden="true" /> Rút thẻ Tư thế
-            </button>
-          </motion.section>
-        )}
-
-        {/* MODE A: IDLE / DRAW DECK VIEW */}
-        {journeyPhase === 'standard' && drawState === 'idle' && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center text-center max-w-md w-full"
-          >
-            {/* 3D Stacked Tarot Card Deck */}
-            <div className="relative w-56 h-80 sm:w-64 sm:h-92 my-6 cursor-pointer group" onClick={handleStartDraw}>
-              {/* Stack effect layers */}
-              <div className="absolute inset-0 rounded-2xl bg-neutral-900 border border-amber-500/20 shadow-2xl transform -rotate-6 translate-y-2 opacity-50"></div>
-              <div className="absolute inset-0 rounded-2xl bg-neutral-900 border border-amber-500/30 shadow-2xl transform rotate-3 -translate-y-1 opacity-70"></div>
-
-              {/* Top Card Back with Metallic Gold Filigree Pattern */}
-              <motion.div
-                whileHover={shouldReduceMotion ? undefined : { y: -8, scale: 1.02 }}
-                transition={{ duration: 0.3 }}
-                className="relative w-full h-full rounded-2xl p-4 bg-gradient-to-br from-[#2a0e14] via-[#1a080d] to-[#0d0407] border-4 border-[#D4AF37] gold-glow flex flex-col items-center justify-between overflow-hidden"
-              >
-                {/* Filigree corner decorations */}
-                <div className="absolute top-2 left-2 text-[#D4AF37] opacity-80 text-xs">✦</div>
-                <div className="absolute top-2 right-2 text-[#D4AF37] opacity-80 text-xs">✦</div>
-                <div className="absolute bottom-2 left-2 text-[#D4AF37] opacity-80 text-xs">✦</div>
-                <div className="absolute bottom-2 right-2 text-[#D4AF37] opacity-80 text-xs">✦</div>
-
-                {/* Inner Pattern Frame */}
-                <div className="w-full h-full border-2 border-[#D4AF37]/50 rounded-xl p-3 flex flex-col items-center justify-between card-pattern">
-                  <div className="text-[#D4AF37] text-xs tracking-[0.2em] serif-title font-bold uppercase">
-                    TRUTH OR DARE
-                  </div>
-
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-500/20 via-rose-500/20 to-[#7A1F2B]/40 border-2 border-[#D4AF37] flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform">
-                    <Flame className="w-8 h-8 text-[#D4AF37] drop-shadow-[0_0_12px_rgba(212,175,55,0.8)]" />
-                  </div>
-
-                  <div className="text-[#FF6B9D] text-xs tracking-[0.2em] serif-title pink-glow uppercase font-medium">
-                    CẶP ĐÔI
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-
-            <p className="text-sm text-neutral-300 font-light mb-6 flex items-center gap-1.5 justify-center">
-              <span>Đến lượt</span>
-              <span className="font-bold text-amber-300">{currentPlayer.name}</span>
-              <span>rút lá bài tình yêu</span>
-            </p>
-
-            {(playerRewards[currentPlayerIndex].starBalance >= DIFFICULTY_BOOST_STAR_COST
-              || pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === (currentPlayerIndex === 0 ? 1 : 0))) && (
-            <button
-              type="button"
-              onClick={handleQueueDifficultyBoost}
-              disabled={
-                playerRewards[currentPlayerIndex].starBalance < DIFFICULTY_BOOST_STAR_COST
-                || pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === (currentPlayerIndex === 0 ? 1 : 0))
-              }
-              className="mb-3 flex min-h-11 items-center justify-center gap-2 rounded-full border border-orange-300/25 bg-orange-500/[0.08] px-4 text-xs font-semibold text-orange-100 transition-colors hover:border-orange-300/50 hover:bg-orange-500/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label={`Tăng một bậc độ khó cho lượt kế tiếp của ${currentPlayerIndex === 0 ? player2.name : player1.name}, tốn ${DIFFICULTY_BOOST_STAR_COST} sao`}
-            >
-              <TrendingUp className="h-4 w-4" aria-hidden="true" />
-              {pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === (currentPlayerIndex === 0 ? 1 : 0))
-                ? `Đã đặt tăng khó cho ${currentPlayerIndex === 0 ? player2.name : player1.name}`
-                : `Tăng khó ${currentPlayerIndex === 0 ? player2.name : player1.name} · ${DIFFICULTY_BOOST_STAR_COST}★`}
-            </button>
-            )}
-
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleStartDraw}
-              className="btn-shine px-8 py-3.5 rounded-full font-bold text-base text-neutral-950 bg-gold-gradient shadow-[0_0_20px_rgba(212,175,55,0.4)] hover:shadow-[0_0_30px_rgba(255,107,157,0.5)] transition-all cursor-pointer flex items-center gap-2"
-            >
-              <Sparkles className="w-5 h-5 fill-neutral-950" />
-              <span>Rút Bài Ngay</span>
-            </motion.button>
-          </motion.div>
-        )}
-
-        {/* MODE B: SELECT TYPE (If Choose mode is active) */}
-        {journeyPhase === 'standard' && drawState === 'selecting_type' && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center text-center max-w-md w-full glass-wine rounded-3xl p-6 border border-amber-500/30"
-          >
-            <h3 className="font-serif-romantic text-2xl font-bold text-amber-300 mb-2">
-              Lựa Chọn Của {currentPlayer.name}
-            </h3>
-            <p className="text-xs text-neutral-300 mb-6">
-              Bạn muốn chọn câu hỏi Sự Thật hay nhận thử thách Thách?
-            </p>
-
-            <div className="grid grid-cols-2 gap-4 w-full">
-              <motion.button
-                whileHover={availableDrawTypes.includes('truth') ? { scale: 1.03 } : undefined}
-                whileTap={availableDrawTypes.includes('truth') ? { scale: 0.97 } : undefined}
-                disabled={!availableDrawTypes.includes('truth')}
-                onClick={() => executeDrawCard('truth')}
-                className="p-5 rounded-2xl bg-gradient-to-b from-blue-950/80 to-indigo-950/80 border border-blue-400/50 hover:border-blue-300 flex flex-col items-center gap-2 cursor-pointer shadow-lg disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-blue-400/50"
-              >
-                <HelpCircle className="w-8 h-8 text-blue-300" />
-                <span className="font-serif-romantic font-bold text-lg text-white">Sự Thật</span>
-                <span className="text-[10px] text-blue-200">
-                  {availableDrawTypes.includes('truth') ? 'Trả lời thành thật' : 'Không còn thẻ phù hợp'}
-                </span>
-              </motion.button>
-
-              <motion.button
-                whileHover={availableDrawTypes.includes('dare') ? { scale: 1.03 } : undefined}
-                whileTap={availableDrawTypes.includes('dare') ? { scale: 0.97 } : undefined}
-                disabled={!availableDrawTypes.includes('dare')}
-                onClick={() => executeDrawCard('dare')}
-                className="p-5 rounded-2xl bg-gradient-to-b from-rose-950/80 to-red-950/80 border border-rose-400/50 hover:border-rose-300 flex flex-col items-center gap-2 cursor-pointer shadow-lg disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-rose-400/50"
-              >
-                <Zap className="w-8 h-8 text-rose-300" />
-                <span className="font-serif-romantic font-bold text-lg text-white">Thử Thách</span>
-                <span className="text-[10px] text-rose-200">
-                  {availableDrawTypes.includes('dare') ? 'Thực hiện hành động' : 'Không còn thẻ phù hợp'}
-                </span>
-              </motion.button>
-            </div>
-          </motion.div>
-        )}
-
-        {/* MODE C: SHUFFLING ANIMATION */}
-        {journeyPhase === 'standard' && drawState === 'shuffling' && (
-          <div className="flex flex-col items-center py-12">
-            <motion.div
-              animate={{
-                rotateY: shouldReduceMotion ? 0 : [0, 180, 360],
-                rotateZ: shouldReduceMotion ? 0 : [-5, 5, -5],
-                scale: shouldReduceMotion ? 1 : [1, 1.1, 1],
-              }}
-              transition={{ duration: shouldReduceMotion ? 0.08 : 0.8, repeat: shouldReduceMotion ? 0 : Infinity, ease: 'easeInOut' }}
-              className="w-48 h-72 rounded-2xl bg-gradient-to-br from-amber-600 to-rose-900 border-2 border-amber-300 shadow-2xl flex items-center justify-center"
-            >
-              <Sparkles className={`w-12 h-12 text-amber-200 ${shouldReduceMotion ? '' : 'animate-spin'}`} />
-            </motion.div>
-            <p className={`mt-6 text-sm text-amber-300 font-serif-romantic italic ${shouldReduceMotion ? '' : 'animate-pulse'}`}>
-              Đang xáo trộn các lá bài bí mật...
-            </p>
-          </div>
-        )}
-
-        {(journeyPhase === 'position' || journeyPhase === 'final') && drawState === 'shuffling' && (
-          <div className="flex flex-col items-center py-12" role="status" aria-live="polite">
-            <div className="luxury-shuffle relative h-72 w-52 sm:h-80 sm:w-56" aria-hidden="true">
-              {[-1, 0, 1].map((offset) => (
-                <motion.div
-                  key={offset}
-                  initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0.65, x: 0, rotate: 0, scale: 0.94 }}
-                  animate={shouldReduceMotion
-                    ? { opacity: 1 }
-                    : {
-                        opacity: [0.72, 1, 0.82],
-                        x: [0, offset * 42, offset * 12],
-                        y: [8, Math.abs(offset) * -9, 0],
-                        rotate: [0, offset * 8, offset * 2],
-                        scale: [0.96, 1.02, 1],
-                      }}
-                  transition={{ duration: shouldReduceMotion ? 0.08 : 0.72, ease: 'easeInOut' }}
-                  className="luxury-shuffle__card"
-                >
-                  <span className="luxury-deck__inner"><span className="luxury-deck__seal">✦</span></span>
-                </motion.div>
-              ))}
-            </div>
-            <p className="mt-6 font-serif-romantic text-sm italic text-[#f7e7b0]">Đang chọn nghi thức dành cho {currentPlayer.name}…</p>
-          </div>
-        )}
-
-        {/* MODE D: DRAWN CARD 3D FLIP DISPLAY */}
-        {(drawState === 'drawing' || drawState === 'drawn') && activeCard && (
-          <div className="w-full max-w-md flex flex-col items-center">
-            {/* 3D Perspective Card Container */}
-            <div className="perspective-1000 w-full my-2">
-              <motion.div
-                initial={shouldReduceMotion ? { opacity: 0 } : { rotateY: 180, scale: 0.8 }}
-                animate={{
-                  rotateY: cardFlipped ? 0 : 180,
-                  scale: 1,
-                  opacity: 1,
-                }}
-                transition={{ duration: shouldReduceMotion ? 0.08 : 0.85, ease: [0.22, 1, 0.36, 1] }}
-                className="transform-style-3d relative w-full"
-                style={{ minHeight: '420px' }}
-              >
-                {/* CARD BACK SIDE */}
-                <div className={`backface-hidden absolute inset-0 rotate-y-180 rounded-2xl p-6 shadow-2xl flex flex-col items-center justify-center ${isPositionCard ? 'luxury-card-back' : 'bg-gradient-to-br from-[#2a0e14] via-[#1a080d] to-[#0d0407] border-2 border-[#D4AF37]'}`}>
-                  {isPositionCard
-                    ? <span className="luxury-deck__seal" aria-hidden="true">✦</span>
-                    : <Flame className={`w-16 h-16 text-amber-400 ${shouldReduceMotion ? '' : 'animate-pulse'}`} />}
-                </div>
-
-                {/* CARD FRONT SIDE - New Design */}
-                <div className={`backface-hidden absolute inset-0 game-card ${
-                  isMythicPositionCard
-                    ? 'card-position-rare'
-                    : isPositionCard
-                      ? 'card-position'
-                      : `card-${activeCard.level}`
-                } ${!isPositionCard && activeCard.level !== 'gentle' ? 'card-wave-pattern' : ''}`}
-                  style={{ borderRadius: '16px' }}
-                >
-                  {cardFlipped && !shouldReduceMotion && (
-                    <span key={`sheen-${activeCard.id}-${isRevealed}`} className="card-sheen" aria-hidden="true" />
-                  )}
-                  {/* Corner decorations for intimate/passionate */}
-                  {!isPositionCard && activeCard.level !== 'gentle' && (
-                    <>
-                      <span style={{ fontSize: `${10 * activeTextScale}px` }} className="card-corner-deco top-2 left-2.5">♠ ♥</span>
-                      <span style={{ fontSize: `${10 * activeTextScale}px` }} className="card-corner-deco top-2 right-2.5">♦ ♣</span>
-                      <span style={{ fontSize: `${10 * activeTextScale}px` }} className="card-corner-deco bottom-2 left-2.5">♥ ♠</span>
-                      <span style={{ fontSize: `${10 * activeTextScale}px` }} className="card-corner-deco bottom-2 right-2.5">♣ ♦</span>
-                    </>
-                  )}
-
-                  <div className="card-content-layer flex flex-col h-full p-5 sm:p-6">
-                    {/* Card Header Tag & Level */}
-                    <div className="flex items-start justify-between gap-2 pb-3 border-b border-white/10">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {isPositionCard && activeCard.position ? (
-                          <>
-                            <span style={{ fontSize: `${12 * activeTextScale}px` }} className="rounded-full border border-[#e2c275]/45 bg-[#e2c275]/10 px-3 py-1 font-bold text-[#f7e7b0]">
-                              ✦ {getPositionFamilyLabel(activeCard).toUpperCase()}
-                            </span>
-                            <span style={{ fontSize: `${10 * activeTextScale}px` }} className="rounded-full border border-white/15 bg-black/20 px-2.5 py-1 text-slate-200">
-                              {POSITION_RECIPIENT_LABELS[getCardTurnAudience(activeCard)]}
-                            </span>
-                            <span style={{ fontSize: `${12 * activeTextScale}px` }} className={`rounded-full border px-2.5 py-1 font-bold ${
-                              isMythicPositionCard
-                                ? 'border-[#e8a48c]/55 bg-[#d7b1ff]/10 text-[#f4e8ff]'
-                                : 'border-[#e2c275]/35 bg-[#e2c275]/10 text-[#f7e7b0]'
-                            }`}>
-                              {derivePositionDifficultyStars(activeCard)}★
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <span
-                              style={{ fontSize: `${12 * activeTextScale}px` }}
-                              className={`px-3 py-1 rounded-full border font-semibold ${
-                                activeCard.type === 'truth'
-                                  ? 'bg-blue-950/80 text-blue-300 border-blue-500/40'
-                                  : 'bg-rose-950/80 text-rose-300 border-rose-500/40'
-                              }`}
-                            >
-                              {activeCard.type === 'truth' ? '🔍 SỰ THẬT' : '⚡ THỬ THÁCH'}
-                            </span>
-                            <span style={{ fontSize: `${12 * activeTextScale}px` }} className={`px-2.5 py-1 rounded-full border ${LEVEL_INFO[activeCard.level].badgeBg}`}>
-                              {LEVEL_INFO[activeCard.level].icon} {LEVEL_INFO[activeCard.level].name}
-                            </span>
-                            <span style={{ fontSize: `${12 * activeTextScale}px` }} className="rounded-full border border-amber-300/25 bg-amber-300/[0.07] px-2 py-1 font-semibold text-amber-200">
-                              {isPositionCard ? derivePositionDifficultyStars(activeCard) : deriveDifficultyStars(activeCard)}★
-                            </span>
-                            <span style={{ fontSize: `${10 * activeTextScale}px` }} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-neutral-300">
-                              {AUDIENCE_LABELS[getCardTurnAudience(activeCard)]}
-                            </span>
-                          </>
-                        )}
-                      </div>
-
-                      {/* Favorite heart toggle */}
-                      <button
-                        onClick={() => onToggleFavorite(activeCard.id)}
-                        className="p-1.5 rounded-full hover:bg-neutral-800/50 transition-colors"
-                        title={isFavorited ? 'Bỏ yêu thích' : 'Yêu thích lá bài này'}
-                      >
-                        <Heart
-                          className={`w-5 h-5 transition-transform ${
-                            isFavorited
-                              ? 'text-rose-500 fill-rose-500 scale-110'
-                              : 'text-neutral-500 hover:text-rose-400'
-                          }`}
-                        />
-                      </button>
-                    </div>
-
-                    {/* Targeted Player Prompt */}
-                    <div className="my-2 text-center">
-                      <span style={{ fontSize: `${12 * activeTextScale}px` }} className="text-amber-200/80 uppercase tracking-widest font-medium">
-                        {isPositionCard ? 'Lượt rút:' : 'Lượt thực hiện:'}
-                      </span>
-                      <span style={{ fontSize: `${16 * activeTextScale}px` }} className="ml-2 font-serif-romantic font-bold text-amber-300">
-                        {isPositionCard && activeCard.position
-                          ? `${currentPlayer.name} · ${POSITION_RECIPIENT_LABELS[getCardTurnAudience(activeCard)]}`
-                          : `${performingPlayer.name} ${performingPlayer.avatar}`}
-                      </span>
-                    </div>
-
-                    {/* Card Content with Icon */}
-                    <div className="my-auto min-h-0 overflow-y-auto overscroll-contain py-4 flex flex-col items-center justify-center text-center">
-                      {!revealedCard ? (
-                        <div className="flex flex-col items-center py-6 px-4">
-                          <EyeOff className="w-10 h-10 text-amber-400 mb-3 opacity-80" />
-                          <p style={{ fontSize: `${12 * activeTextScale}px` }} className="text-neutral-400 mb-4 max-w-xs">
-                            Nội dung lá bài đã được bảo mật. Bấm vào nút bên dưới khi bạn đã sẵn sàng!
-                          </p>
-                          <button
-                            onClick={() => {
-                              soundEngine.playTick();
-                              setIsRevealed(true);
-                              if (isPositionCard) onOpenPositionCard(activeCard.id);
-                            }}
-                            className={`px-5 py-2.5 rounded-full border font-semibold transition-all flex items-center gap-2 cursor-pointer ${isPositionCard ? 'luxury-unseal-button' : 'bg-amber-500/20 border-amber-400 text-amber-200 hover:bg-amber-500/30'}`}
-                            style={{ fontSize: `${12 * activeTextScale}px` }}
-                          >
-                            <Eye className="w-4 h-4" />
-                            <span>Xem Nội Dung</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <motion.div
-                          initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className={`flex flex-col items-center ${isPositionCard ? 'position-content-reveal' : ''}`}
-                        >
-                          {/* Card Icon (custom image or SVG) */}
-                          {activeCard.customImage ? (
-                            <div style={activeIconSpacingStyle} className={`card-icon-wrapper-lg card-custom-icon-wrapper ${isMythicPositionCard ? 'mythic-icon-aura' : ''}`}>
-                              <div className="h-full w-full transition-transform duration-200 motion-reduce:transition-none" style={activeIconScaleStyle}>
-                                <img
-                                  src={activeCard.customImage}
-                                  alt="icon"
-                                  className="card-custom-icon w-full h-full object-contain"
-                                />
-                              </div>
-                            </div>
-                          ) : (() => {
-                            const iconName = activeCard.icon || autoAssignIcon(activeCard.content);
-                            const IconComp = getCardIcon(iconName);
-                            return IconComp ? (
-                              <div style={activeIconSpacingStyle} className={`card-icon-wrapper-lg card-icon-color ${isMythicPositionCard ? 'mythic-icon-aura' : ''}`}>
-                                <div className="h-full w-full transition-transform duration-200 motion-reduce:transition-none" style={activeIconScaleStyle}>
-                                  <IconComp className="w-full h-full" />
-                                </div>
-                              </div>
-                            ) : null;
-                          })()}
-
-                          {clothingBanner && (
-                            <p
-                              role="note"
-                              className="mb-3 inline-flex items-center gap-2 rounded-full border border-rose-300/45 bg-rose-500/15 px-3 py-1.5 text-xs font-bold text-rose-100"
-                            >
-                              <span aria-hidden="true">👕</span>
-                              {clothingBanner}
-                            </p>
-                          )}
-                          <p style={{ fontSize: `${16 * activeTextScale}px` }} className="text-white font-medium leading-relaxed max-w-sm">
-                            {activeCard.content}
-                          </p>
-                          {activeCard.hint && (
-                            <p style={{ fontSize: `${12 * activeTextScale}px` }} className="mt-4 text-rose-300/80 italic font-light">
-                              💡 Gợi ý: {activeCard.hint}
-                            </p>
-                          )}
-                        </motion.div>
-                      )}
-                    </div>
-
-                    {/* Countdown Timer (If active) */}
-                    {timerSeconds !== null && isRevealed && !isFinalPositionCard && (
-                        <div className="pt-2 border-t border-white/10 flex items-center justify-between">
-                          <div
-                            style={{ fontSize: `${12 * activeTextScale}px` }}
-                            className={`flex items-center gap-2 ${timerSeconds === 0 ? 'text-rose-300' : 'text-amber-300'}`}
-                          >
-                            <TimerIcon
-                              className={`w-4 h-4 ${timerSeconds === 0 ? 'text-rose-400' : `text-amber-400 ${isTimerRunning && !shouldReduceMotion ? 'animate-pulse' : ''}`}`}
-                            />
-                            <span>{timerSeconds === 0 ? 'Hết giờ:' : 'Thời gian:'}</span>
-                            <span style={{ fontSize: `${16 * activeTextScale}px` }} className={`font-bold ${timerSeconds === 0 ? 'text-rose-200' : 'text-white'}`}>
-                              {timerSeconds === 0 ? 'Reng reng!' : timerSeconds !== null ? `${timerSeconds}s` : '--'}
-                            </span>
-                          </div>
-
-                          {hasTimerStarted ? (
-                            <button
-                              type="button"
-                              onClick={handleTimerControl}
-                              aria-label={timerSeconds === 0 ? 'Đếm lại thời gian thử thách' : isTimerRunning ? 'Tạm dừng đếm giờ' : 'Tiếp tục đếm giờ'}
-                              style={{ fontSize: `${12 * activeTextScale}px` }}
-                              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-1 text-neutral-200 hover:text-white"
-                            >
-                              {timerSeconds === 0 && <RotateCcw className="h-3 w-3" aria-hidden="true" />}
-                              {timerSeconds === 0 ? 'Đếm lại' : isTimerRunning ? 'Tạm dừng' : 'Tiếp tục'}
-                            </button>
-                          ) : isPositionCard ? (
-                            <button
-                              type="button"
-                              onClick={handleTimerControl}
-                              style={{ fontSize: `${12 * activeTextScale}px` }}
-                              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e2c275]/30 bg-[#e2c275]/10 px-3 py-1 text-[#fff4d6] hover:bg-[#e2c275]/15"
-                            >
-                              <TimerIcon className="h-3 w-3" aria-hidden="true" />
-                              Bắt đầu đếm giờ
-                            </button>
-                          ) : (
-                            <span className="rounded-full border border-amber-300/20 bg-amber-500/[0.07] px-2.5 py-1 text-[10px] font-semibold text-amber-100/80">
-                              Chờ bắt đầu
-                            </span>
-                          )}
-                        </div>
-                      )}
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-
-            {/* ACTION BUTTONS (Hoàn Thành / Chưa hoàn thành) */}
-            {drawState === 'drawn' && isRevealed && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-4 flex w-full flex-wrap items-center justify-center gap-3"
-              >
-                {!isPositionCard && (
-                  <button
-                    type="button"
-                    onClick={handleReroll}
-                    disabled={activeCardWasRerolled || playerRewards[performingPlayerIndex].starBalance < REROLL_STAR_COST}
-                    aria-label={`Đổi lá bài, tốn ${REROLL_STAR_COST} sao của ${performingPlayer.name}`}
-                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-full border border-amber-300/25 bg-amber-500/[0.07] px-4 text-xs font-semibold text-amber-100 transition-colors hover:border-amber-300/50 hover:bg-amber-500/[0.13] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Shuffle className="h-4 w-4" aria-hidden="true" />
-                    {activeCardWasRerolled ? 'Đã đổi bài trong lượt này' : `Đổi bài · ${REROLL_STAR_COST}★ của ${performingPlayer.name}`}
-                  </button>
-                )}
-                {isFinalPositionCard ? (
-                  <button
-                    type="button"
-                    onClick={handleComplete}
-                    className="min-h-12 w-full rounded-full bg-[linear-gradient(135deg,#f4e8ff,#e8a48c)] px-5 text-sm font-bold text-[#120717] shadow-[0_0_28px_rgba(232,164,140,.3)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f4e8ff] motion-reduce:transform-none"
-                  >
-                    Đã xem · Kết thúc ván
-                  </button>
-                ) : !isPositionCard && timerSeconds !== null && !hasTimerStarted ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleSkip}
-                      className="flex-1 py-3 px-4 rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-300 hover:text-white hover:border-neutral-500 transition-all font-medium text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <XCircle className="w-4 h-4 text-neutral-400" aria-hidden="true" />
-                      <span>{activeCard.type === 'truth' ? 'Không trả lời' : 'Không thực hiện'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleTimerControl}
-                      className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 text-sm font-bold text-neutral-950 shadow-[0_0_22px_rgba(212,175,55,.32)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 motion-reduce:transform-none"
-                    >
-                      <TimerIcon className="h-4 w-4" aria-hidden="true" />
-                      Bắt đầu · {timerSeconds}s
-                    </button>
-                  </>
-                ) : isPositionCard ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handlePositionAdvance(false)}
-                      className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 text-xs font-semibold text-slate-300 transition-colors hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
-                    >
-                      <XCircle className="h-4 w-4" aria-hidden="true" /> Bỏ qua
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handlePositionAdvance(true)}
-                      className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-[linear-gradient(135deg,#f7e7b0,#cda95c)] px-4 text-xs font-bold text-[#08101f] shadow-[0_0_20px_rgba(226,194,117,.22)] transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f7e7b0] motion-reduce:transform-none"
-                    >
-                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> {completionActionLabel}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={handleSkip}
-                      className="flex-1 py-3 px-4 rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-300 hover:text-white hover:border-neutral-500 transition-all font-medium text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <XCircle className="w-4 h-4 text-neutral-400" />
-                      <span>{activeCard.type === 'truth' ? 'Sai / Không trả lời' : 'Không thực hiện'}</span>
-                    </button>
-
-                    <button
-                      onClick={handleComplete}
-                      className="flex-1 py-3 px-4 rounded-full bg-gold-gradient text-neutral-950 font-bold text-xs sm:text-sm shadow-[0_0_20px_rgba(212,175,55,0.4)] hover:shadow-[0_0_25px_rgba(255,107,157,0.5)] transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-4 h-4 fill-neutral-950 text-gold-gradient" />
-                      <span>{completionActionLabel}</span>
-                    </button>
-                  </>
-                )}
-              </motion.div>
-            )}
-          </div>
-        )}
+              {renderActions()}
+            </>
+          )}
         </div>
-        <div className="game-outfit-desktop">
-          <PlayerOutfitStatus player={player2} outfitState={outfitStates[1]} rewardState={playerRewards[1]} hasPendingDifficultyBoost={pendingDifficultyBoosts.some((boost) => boost.targetPlayerIndex === 1)} active={currentPlayerIndex === 1} mood={figureMood} />
-        </div>
-      </div>
 
-      {/* FOOTER: Quick Player Scores */}
-      <div className="w-full flex items-center justify-around py-2 px-4 glass-dark rounded-xl border border-neutral-800 text-xs text-neutral-300">
-        <div className="flex items-center gap-2">
-          <span>{player1.avatar}</span>
-          <span className="font-semibold text-rose-300">{player1.name}:</span>
-          <span>{player1.completedCount} hoàn thành</span>
-        </div>
-        <div className="h-4 w-px bg-neutral-800" />
-        <div className="flex items-center gap-2">
-          <span>{player2.avatar}</span>
-          <span className="font-semibold text-amber-300">{player2.name}:</span>
-          <span>{player2.completedCount} hoàn thành</span>
-        </div>
+        <div className="game-stage__side">{renderPanel(1)}</div>
       </div>
 
       <AnimatePresence>
@@ -2579,7 +1840,7 @@ export const GameTable: React.FC<GameTableProps> = ({
             lockedReason={penaltyLockedReason}
             onReturn={() => setShowPenaltyPrompt(false)}
             onChooseGarment={handlePenaltyGarmentChoice}
-            onContinueWithoutPenalty={finalizeSkippedTurn}
+            onContinueWithoutPenalty={() => finalizeSkippedTurn()}
           />
         )}
       </AnimatePresence>
@@ -2609,6 +1870,32 @@ export const GameTable: React.FC<GameTableProps> = ({
           onConfirm={handleConfirmDualRemoval}
           onCancel={() => setShowDualRemovalDialog(false)}
           onContinueWithoutRemoval={handleContinueWithoutRemoval}
+        />
+      )}
+      {showPause && (
+        <PauseDialog
+          canDropCard={canDropCard}
+          reduceMotion={reduceMotion}
+          onContinue={() => setShowPause(false)}
+          onDropCard={handleDropCard}
+          onEnd={() => {
+            setShowPause(false);
+            setShowEndConfirm(true);
+          }}
+        />
+      )}
+      {showEndConfirm && (
+        <ConfirmDialog
+          icon={<Flag className="h-5 w-5" />}
+          title="Kết thúc ván này?"
+          description="Hai bạn sẽ chuyển sang phần tổng kết và ván này dừng lại tại đây."
+          confirmLabel="Kết thúc ván"
+          cancelLabel="Chơi tiếp"
+          onCancel={() => setShowEndConfirm(false)}
+          onConfirm={() => {
+            setShowEndConfirm(false);
+            onFinishGame('manual');
+          }}
         />
       )}
     </div>

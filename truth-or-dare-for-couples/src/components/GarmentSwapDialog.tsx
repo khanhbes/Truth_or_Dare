@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useId, useMemo, useRef, useState } from 'react';
 import { ArrowLeftRight, Check, Lock, X } from 'lucide-react';
 import type { GarmentSlot, OutfitState } from '../types';
 import {
@@ -8,6 +8,7 @@ import {
   swapGarments,
 } from '../utils/wardrobe';
 import { OutfitFigure } from './OutfitFigure';
+import { useDialogFocus } from './useDialogFocus';
 
 interface GarmentSwapDialogProps {
   playerNames: [string, string];
@@ -15,14 +16,6 @@ interface GarmentSwapDialogProps {
   onConfirm: (firstSlot: GarmentSlot, secondSlot: GarmentSlot) => void;
   onCancel: () => void;
 }
-
-const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  '[href]',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 export const GarmentSwapDialog: React.FC<GarmentSwapDialogProps> = ({
   playerNames,
@@ -32,12 +25,10 @@ export const GarmentSwapDialog: React.FC<GarmentSwapDialogProps> = ({
 }) => {
   const [selected, setSelected] = useState<[GarmentSlot | null, GarmentSlot | null]>([null, null]);
   const [mobileStep, setMobileStep] = useState<0 | 1>(0);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const cancelRef = useRef(onCancel);
+  const dialogRef = useDialogFocus<HTMLDivElement>({ onEscape: onCancel, initialFocusRef: closeRef });
   const titleId = useId();
   const descriptionId = useId();
-  cancelRef.current = onCancel;
 
   const eligible = useMemo(() => [
     getRemovableGarmentSlots(outfitStates[0]),
@@ -46,39 +37,6 @@ export const GarmentSwapDialog: React.FC<GarmentSwapDialogProps> = ({
   const preview = selected[0] && selected[1]
     ? swapGarments(outfitStates, selected[0], selected[1])
     : null;
-
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const timer = window.setTimeout(() => closeRef.current?.focus(), 30);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        cancelRef.current();
-        return;
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return;
-      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)];
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, []);
 
   const selectSlot = (index: 0 | 1, slot: GarmentSlot) => {
     const nextValue = selected[index] === slot ? null : slot;
@@ -95,7 +53,7 @@ export const GarmentSwapDialog: React.FC<GarmentSwapDialogProps> = ({
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} className="garment-dialog__panel garment-swap__panel">
         <header className="garment-dialog__header">
           <div>
-            <span className="garment-dialog__source">Thẻ đổi trang phục</span>
+            <span className="garment-dialog__source">Lá đổi trang phục</span>
             <h2 id={titleId}>Chọn 2 món để đổi</h2>
             <p id={descriptionId}>Mỗi người chọn một món đang tháo được. Trang phục chỉ thay đổi sau khi xác nhận.</p>
           </div>
@@ -159,7 +117,7 @@ export const GarmentSwapDialog: React.FC<GarmentSwapDialogProps> = ({
           <ArrowLeftRight aria-hidden="true" />
           {preview ? (
             <div>
-              <strong>{GARMENT_LABELS[selected[0]!]} ↔ {GARMENT_LABELS[selected[1]!]}</strong>
+              <strong>{GARMENT_LABELS[selected[0]!]} của {playerNames[0]} ↔ {GARMENT_LABELS[selected[1]!]} của {playerNames[1]}</strong>
               {(preview.replaced[0] || preview.replaced[1]) && (
                 <p>
                   Món cùng loại đang mặc sẽ bị thay: {[

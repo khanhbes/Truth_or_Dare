@@ -22,7 +22,8 @@ export const recordPositionDraw = (stats: PositionSessionStats): PositionSession
 
 export const recordPositionOpen = (stats: PositionSessionStats): PositionSessionStats => ({
   ...stats,
-  opened: stats.opened + 1,
+  // A card opened again after the game was continued is still one opened card.
+  opened: Math.min(stats.drawn, stats.opened + 1),
 });
 
 export const applyPositionResolution = (

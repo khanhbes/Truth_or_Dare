@@ -1,0 +1,1259 @@
+/* ===== Game table =====
+   The card height is whatever the window leaves after the header and the
+   action row, so the main button is always on screen and the card never moves
+   between states. Everything on the card scales with that height. */
+.game-root {
+  --action-h: 5.75rem;
+  --table-gap: clamp(.5rem, 1.6svh, 1.1rem);
+  --card-h: 30rem;
+  --card-w: calc(var(--card-h) * 11 / 15);
+  --panel-w: clamp(9rem, 15vw, 12rem);
+  --center-w: max(var(--card-w), 26rem);
+  --stage-gap: clamp(1rem, 3vw, 3rem);
+  position: relative;
+  z-index: 10;
+  display: flex;
+  width: 100%;
+  max-width: 92rem;
+  min-height: 100svh;
+  flex-direction: column;
+  margin: 0 auto;
+  padding: .75rem 1rem;
+}
+
+@media (min-width: 1024px) {
+  .game-root {
+    --header-h: 4.25rem;
+    --panel-w: clamp(10.5rem, 16vw, 16rem);
+    --card-h: clamp(19rem, calc(100svh - var(--header-h) - var(--action-h) - var(--table-gap) * 2 - 1.5rem - 2px), 37.5rem);
+  }
+
+  .game-root[data-game-state='final-choice'] {
+    /* 92rem is where the root stops growing; a wider row would sit off centre. */
+    --center-w: min(54rem, calc(min(100vw, 92rem) - var(--panel-w) * 2 - var(--stage-gap) * 2 - 2.5rem));
+  }
+}
+
+/* ----- Header: one bar on larger screens, three rows on phones ----- */
+.game-header {
+  position: relative;
+  z-index: 30;
+  display: grid;
+  grid-template-areas:
+    "turn tools"
+    "progress progress"
+    "heat heat";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .65rem 1rem;
+  border: 1px solid rgba(255, 107, 157, .18);
+  border-radius: 1.1rem;
+  background: rgba(24, 18, 21, .94);
+  padding: .6rem .85rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .25);
+  transition: opacity .4s ease, filter .4s ease;
+}
+
+.game-header__turn {
+  display: flex;
+  min-width: 0;
+  grid-area: turn;
+  align-items: center;
+  gap: .65rem;
+}
+
+.game-header__avatar {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  place-items: center;
+  border: 2px solid #ff6b9d;
+  border-radius: 999px;
+  background: rgba(255, 107, 157, .16);
+  box-shadow: 0 0 14px rgba(255, 107, 157, .3);
+  font-size: 1.45rem;
+}
+
+.game-header__avatar[data-player='1'] {
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, .16);
+  box-shadow: 0 0 14px rgba(212, 175, 55, .3);
+}
+
+.game-header__progress {
+  min-width: 0;
+  grid-area: progress;
+}
+
+.game-header .game-header__fill {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  transition: transform .75s ease-out, opacity .7s ease;
+}
+
+.game-header__beat {
+  animation: header-beat .75s ease-out;
+}
+
+@keyframes header-beat {
+  25% { transform: scale(1.36); }
+  50% { transform: scale(.94); }
+  75% { transform: scale(1.08); }
+}
+
+.game-header__heat {
+  position: relative;
+  display: flex;
+  grid-area: heat;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.game-header__odds {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + .9rem);
+  right: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 1rem;
+  background: #171014;
+  padding: 1rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+}
+
+.game-header__tools {
+  display: flex;
+  grid-area: tools;
+  align-items: center;
+  gap: .35rem;
+}
+
+@media (min-width: 1024px) {
+  .game-header {
+    height: var(--header-h);
+    grid-template-areas: "turn progress heat tools";
+    grid-template-columns: minmax(8rem, 13rem) minmax(0, 1fr) auto auto;
+    column-gap: clamp(.9rem, 1.8vw, 2rem);
+    padding-block: 0;
+  }
+
+  .game-header__heat {
+    border-left: 1px solid rgba(255, 255, 255, .1);
+    padding-left: clamp(.9rem, 1.8vw, 1.75rem);
+  }
+}
+
+/* Focus on the open card: the header steps back until it is needed. */
+@media (hover: hover) {
+  .game-root[data-focus] .game-header:not(:hover, :focus-within) {
+    opacity: .62;
+  }
+}
+
+/* Instant labels for icon buttons. */
+@media (hover: hover) {
+  .game-tip[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    z-index: 50;
+    top: calc(100% + .5rem);
+    left: 50%;
+    border: 1px solid rgba(255, 255, 255, .14);
+    border-radius: .55rem;
+    background: #1d1419;
+    padding: .3rem .6rem;
+    color: #fff;
+    font-size: .75rem;
+    font-weight: 600;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
+  .game-tip[data-tip-align='end']::after {
+    right: 0;
+    left: auto;
+    transform: none;
+  }
+
+  .game-tip[data-tip]:hover::after,
+  .game-tip[data-tip]:focus-visible::after {
+    opacity: 1;
+  }
+}
+
+/* Short messages float between the header and the deck; nothing moves for them. */
+.game-toast {
+  position: fixed;
+  z-index: 45;
+  top: 1rem;
+  right: 0;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 1rem;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .game-toast {
+    top: calc(1.1rem + var(--header-h));
+  }
+
+  .resume-notice {
+    top: 5.35rem;
+  }
+}
+
+/* ----- Stage: panel · card · panel ----- */
+.game-stage {
+  display: grid;
+  width: 100%;
+  flex: 1;
+  grid-template-columns: var(--panel-w) minmax(0, var(--center-w)) var(--panel-w);
+  align-content: center;
+  align-items: start;
+  justify-content: center;
+  column-gap: var(--stage-gap);
+  padding-top: var(--table-gap);
+  /* The figures glide aside for the last choice instead of jumping. */
+  transition: grid-template-columns .55s cubic-bezier(.22, 1, .36, 1);
+}
+
+.game-stage__side {
+  min-width: 0;
+}
+
+.game-stage__center {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: var(--card-h) var(--action-h);
+  justify-items: center;
+  row-gap: var(--table-gap);
+  transition: opacity .35s ease, filter .35s ease;
+}
+
+.game-stage__center > .table-span {
+  display: grid;
+  width: 100%;
+  min-height: 0;
+  grid-row: 1 / -1;
+  align-items: center;
+  justify-items: center;
+}
+
+.table-slot {
+  position: relative;
+  width: var(--card-w);
+  height: var(--card-h);
+}
+
+.table-slot[data-moving] {
+  cursor: pointer;
+}
+
+.table-actions {
+  display: grid;
+  width: min(100%, 28rem);
+  height: var(--action-h);
+  grid-template-rows: 3rem 2.25rem;
+  row-gap: .5rem;
+}
+
+.table-actions__main,
+.table-actions__more {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: .65rem;
+}
+
+.table-panel {
+  width: min(100%, 28rem);
+  max-height: 100%;
+  overflow-y: auto;
+  border: 1px solid rgba(226, 194, 117, .4);
+  border-radius: 1.5rem;
+  background: linear-gradient(160deg, rgba(7, 11, 24, .98), rgba(16, 34, 64, .94));
+  padding: clamp(1rem, 2.6svh, 1.6rem);
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .45);
+}
+
+/* ----- Card back, deck ----- */
+.card-back {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  container-type: size;
+  overflow: hidden;
+  border-radius: 1.1rem;
+  text-align: center;
+}
+
+.card-back--standard {
+  border: 3px solid #d4af37;
+  background: linear-gradient(135deg, #2a0e14 0%, #1a080d 50%, #0d0407 100%);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .5), 0 0 22px rgba(212, 175, 55, .2);
+}
+
+.card-back--position {
+  border: 2px solid rgba(226, 194, 117, .72);
+  background:
+    radial-gradient(circle at 50% 28%, rgba(74, 112, 177, .28), transparent 32%),
+    linear-gradient(155deg, #17294c 0%, #080d20 52%, #03050d 100%);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, .52), 0 0 22px rgba(226, 194, 117, .12);
+}
+
+.card-back__frame {
+  position: absolute;
+  inset: 3.4cqh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  border: 1.5px solid rgba(212, 175, 55, .5);
+  border-radius: .75rem;
+  background-image: radial-gradient(rgba(212, 175, 55, .8) .6px, transparent .6px);
+  background-size: 20px 20px;
+  padding: 5cqh 2cqw;
+}
+
+.card-back--position .card-back__frame {
+  border-color: rgba(247, 231, 176, .38);
+  background:
+    radial-gradient(circle at center, rgba(226, 194, 117, .08), transparent 34%),
+    repeating-radial-gradient(circle at center, transparent 0 26px, rgba(247, 231, 176, .055) 27px 28px);
+}
+
+.card-back__brand {
+  color: #d9b84a;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: max(12px, 2.7cqh);
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.card-back__brand--pink {
+  color: #ff8bb4;
+}
+
+.card-back--position .card-back__brand {
+  color: #f7e7b0;
+}
+
+/* Collection: a card that is still face down. */
+.card-back--locked {
+  border-color: rgba(212, 175, 55, .34);
+  box-shadow: none;
+}
+
+.card-back--locked.card-back--position {
+  border-color: rgba(226, 194, 117, .34);
+}
+
+.card-back--locked .card-back__frame {
+  border-color: rgba(212, 175, 55, .22);
+  background-image: none;
+  padding: 4cqh 3cqw;
+}
+
+.card-back--locked .card-back__brand {
+  font-family: inherit;
+  font-size: max(12px, 3.6cqh);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.card-back--locked .card-back__seal {
+  border-width: 1px;
+  box-shadow: none;
+  opacity: .9;
+}
+
+.card-back__hint {
+  color: #f1dfe5;
+  font-size: max(12px, 3.4cqh);
+  line-height: 1.4;
+}
+
+.card-back__seal {
+  display: grid;
+  width: 17cqh;
+  height: 17cqh;
+  place-items: center;
+  border: 2px solid #d4af37;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(244, 114, 182, .16), rgba(122, 31, 43, .35) 70%);
+  color: #e6c866;
+  font-size: 7cqh;
+  box-shadow: 0 0 22px rgba(212, 175, 55, .18), inset 0 0 16px rgba(212, 175, 55, .1);
+}
+
+.card-back__seal svg {
+  width: 8.5cqh;
+  height: 8.5cqh;
+}
+
+.card-back--position .card-back__seal {
+  border: 1px solid rgba(247, 231, 176, .72);
+  background: radial-gradient(circle, rgba(226, 194, 117, .2), rgba(7, 11, 24, .3) 68%);
+  color: #fff4d6;
+}
+
+.table-deck {
+  position: absolute;
+  inset: 0;
+  transition: transform .4s cubic-bezier(.22, 1, .36, 1), opacity .4s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+/* Comes in with the same transition (an animation would keep the later ones off the GPU). */
+@starting-style {
+  .table-deck {
+    opacity: 0;
+    transform: translateY(16px) scale(.93);
+  }
+}
+
+.table-deck[data-phase='behind'],
+.table-deck[data-phase='gone'] {
+  opacity: .42;
+  transform: translateY(10px) scale(.955);
+}
+
+.table-deck[data-phase='gone'] {
+  opacity: 0;
+}
+
+/* Each card's resting place and shuffle swing come from TableDeck. */
+.table-deck__layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  opacity: var(--rest-o);
+  transform: translateY(var(--rest-y)) rotate(var(--rest-r));
+  transition: transform .32s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+.table-deck[data-phase='behind'] .table-deck__layer,
+.table-deck[data-phase='gone'] .table-deck__layer {
+  transform: translateY(var(--rest-y)) rotate(calc(var(--rest-r) * .5));
+}
+
+.table-deck[data-phase='shuffling'] .table-deck__layer {
+  animation-name: deck-shuffle;
+  animation-timing-function: cubic-bezier(.65, 0, .35, 1);
+  animation-fill-mode: both;
+}
+
+@keyframes deck-shuffle {
+  0%, 100% { opacity: var(--rest-o); transform: translate(0, var(--rest-y)) rotate(var(--rest-r)); }
+  46% { opacity: 1; transform: translate(var(--out-x), var(--out-y)) rotate(var(--out-r)); }
+}
+
+.table-deck__layer .card-back {
+  transition: transform .3s cubic-bezier(.22, 1, .36, 1);
+}
+
+.table-deck--position .table-deck__layer:last-child .card-back::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(112deg, transparent 28%, rgba(255, 244, 214, .2) 46%, transparent 63%);
+  transform: translateX(-145%);
+  animation: luxury-deck-foil 4.8s ease-in-out infinite;
+}
+
+.table-deck[data-idle] {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .table-deck[data-idle]:hover .table-deck__layer:last-child .card-back {
+    transform: translateY(-8px) scale(1.012);
+  }
+}
+
+/* ----- The card on the table ----- */
+.table-card {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  perspective: 1400px;
+  will-change: transform;
+}
+
+.table-card__flip {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  transform-style: preserve-3d;
+  transition: transform var(--flip-time, .66s) cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+.table-card__flip[data-flipped] {
+  transform: rotateY(0deg);
+}
+
+/* Already face up when it lands on the table: it only fades in. */
+.table-card__flip[data-appear] {
+  animation: card-appear .28s ease-out backwards;
+}
+
+.table-card__content {
+  animation: card-content-in .28s cubic-bezier(.22, 1, .36, 1) backwards;
+}
+
+@keyframes card-appear {
+  from { opacity: 0; }
+}
+
+@keyframes card-content-in {
+  from { opacity: 0; transform: translateY(5px); }
+}
+
+.table-card__side,
+.table-card__side.game-card {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  backface-visibility: hidden;
+  border-radius: 1.1rem;
+}
+
+.table-card__side--back {
+  transform: rotateY(180deg);
+}
+
+.table-card__body {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  padding: calc(20 * 100cqh / 480) calc(22 * 100cqh / 480) calc(18 * 100cqh / 480);
+}
+
+.table-card__top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .12);
+  padding-bottom: calc(10 * 100cqh / 480);
+}
+
+.table-card__turn {
+  flex: none;
+  padding-top: calc(8 * 100cqh / 480);
+  color: #fcd98a;
+  font-weight: 700;
+  text-align: center;
+}
+
+.table-card__timer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  padding-top: calc(10 * 100cqh / 480);
+}
+
+/* A completed card leaves a short sparkle, not a full confetti burst. */
+.card-spark {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+}
+
+.card-spark i {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  width: .5rem;
+  height: .5rem;
+  border-radius: 999px;
+  /* Flat colours: a gradient here makes the GPU build a new program in the middle
+     of the first reward, which froze the screen for about half a second. */
+  background: #ffc46b;
+  opacity: 0;
+  animation: card-spark .82s cubic-bezier(.2, .8, .3, 1) forwards;
+}
+
+.card-spark i:nth-child(odd) {
+  background: #fff1cf;
+}
+
+@keyframes card-spark {
+  0% { opacity: 0; transform: translate(0, 0) scale(.3); }
+  22% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.1); }
+}
+
+/* "Đến lượt…" between two turns. */
+.turn-strip {
+  position: absolute;
+  z-index: 6;
+  top: 36%;
+  right: -14%;
+  left: -14%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.turn-strip > div {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: .7rem;
+  border: 1px solid rgba(255, 220, 160, .45);
+  border-radius: 999px;
+  background: rgba(28, 14, 20, .96);
+  padding: .65rem 1.4rem .65rem .9rem;
+  color: #fff;
+  font-size: 1.05rem;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55), 0 0 30px rgba(255, 190, 120, .18);
+}
+
+/* ----- Choosing Truth or Dare ----- */
+.choose-type {
+  position: absolute;
+  z-index: 4;
+  inset: 0 calc((var(--card-w) - min(var(--center-w), 100vw - 2rem)) / 2);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+}
+
+.choose-type__options {
+  display: grid;
+  flex: 0 1 64%;
+  grid-template-columns: 1fr 1fr;
+  gap: .85rem;
+}
+
+.choose-type__option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .55rem;
+  border: 1px solid;
+  border-radius: 1.1rem;
+  padding: 1rem .75rem;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .4);
+  transition: transform .25s cubic-bezier(.22, 1, .36, 1), border-color .25s ease;
+}
+
+.choose-type__option--truth {
+  border-color: rgba(96, 165, 250, .55);
+  background: linear-gradient(180deg, #14233f, #0b1226);
+}
+
+.choose-type__option--dare {
+  border-color: rgba(251, 113, 133, .55);
+  background: linear-gradient(180deg, #3b1020, #1b0810);
+}
+
+.choose-type__option:disabled {
+  filter: saturate(.35);
+  opacity: .72;
+}
+
+@media (hover: hover) {
+  .choose-type__option:not(:disabled):hover {
+    border-color: rgba(255, 255, 255, .7);
+    transform: translateY(-4px);
+  }
+}
+
+/* ----- Last choice: three cards ----- */
+.final-choice {
+  --final-gap: clamp(.6rem, 2vw, 1.5rem);
+  --final-h: min(
+    calc(var(--card-h) + var(--action-h) + var(--table-gap) - 14.9rem),
+    calc((var(--center-w) - var(--final-gap) * 2) / 3 * 15 / 11)
+  );
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(.5rem, 1.8svh, 1.1rem);
+  text-align: center;
+}
+
+/* The words wait until the figures have made room. */
+.final-choice__head,
+.final-choice__shop {
+  animation: final-words-in .4s ease-out .22s backwards;
+}
+
+@keyframes final-words-in {
+  from { opacity: 0; }
+}
+
+.final-choice__cards {
+  display: flex;
+  justify-content: center;
+  gap: var(--final-gap);
+}
+
+.final-card {
+  width: calc(var(--final-h) * 11 / 15);
+  min-width: 0;
+  transform-origin: 50% 0;
+}
+
+.final-card[data-fate='chosen'] {
+  z-index: 2;
+}
+
+.final-card__slot {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 11 / 15;
+  border-radius: 1.1rem;
+  perspective: 1400px;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform .25s cubic-bezier(.22, 1, .36, 1);
+}
+
+.final-card__slot:disabled {
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .final-card__slot:not(:disabled):hover {
+    transform: translateY(-6px);
+  }
+}
+
+.final-card__flip {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform: rotateY(180deg);
+  transform-style: preserve-3d;
+  transition: transform .66s cubic-bezier(.22, 1, .36, 1);
+}
+
+.final-card__flip[data-up] {
+  transform: rotateY(0deg);
+}
+
+.final-card__side {
+  position: absolute;
+  inset: 0;
+  display: block;
+  backface-visibility: hidden;
+  border-radius: 1.1rem;
+}
+
+.final-card__side--back {
+  transform: rotateY(180deg);
+}
+
+.final-card__side--front {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  border: 1px solid rgba(226, 194, 117, .5);
+  background: linear-gradient(160deg, #1c1129, #2f1a38);
+  padding: .9rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .5), 0 0 34px rgba(226, 194, 117, .14);
+}
+
+.final-card__art {
+  width: 46%;
+  max-height: 46%;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+
+.final-card__title {
+  color: #fff4d6;
+  font-size: clamp(.8rem, 1.1vw, 1rem);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.final-card__hold {
+  min-height: 1.2em;
+  color: #fff4d6;
+  font-size: .8rem;
+  font-weight: 600;
+}
+
+.final-card__ring {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.final-card__ring rect {
+  x: 2px;
+  y: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  rx: 1.3rem;
+  fill: none;
+  stroke: #fff4d6;
+  stroke-width: 4px;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  /* A round dash of zero length would still show as a dot. */
+  visibility: hidden;
+  transition: stroke-dashoffset .15s ease-out, visibility 0s .15s;
+}
+
+.final-card__slot[data-holding] .final-card__ring rect {
+  visibility: visible;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset .6s linear, visibility 0s;
+}
+
+.final-card__pick {
+  display: grid;
+  min-height: 3.4rem;
+  place-items: center;
+  padding-top: .4rem;
+}
+
+.final-card__choose {
+  position: relative;
+  min-height: 2.75rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f7e7b0, #cda95c);
+  padding: 0 1.1rem;
+  color: #08101f;
+  font-size: .875rem;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.final-card__choose::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 16, 31, .3);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .15s ease-out;
+}
+
+.final-card__choose[data-holding]::after {
+  transform: scaleX(1);
+  transition: transform .6s linear;
+}
+
+.final-choice__shop {
+  display: flex;
+  min-height: 2.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  transition: opacity .3s ease;
+}
+
+.final-choice__shop[data-gone] {
+  opacity: 0;
+}
+
+/* ----- Player panels ----- */
+.player-panel {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: rgba(0, 0, 0, .24);
+  text-align: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12);
+  transition: opacity .4s ease, transform .5s cubic-bezier(.22, 1, .36, 1);
+}
+
+/* The turn's glow and the spotlight are layers that only fade, so changing turns never
+   repaints the figures. */
+.player-panel::before,
+.player-panel::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .4s ease;
+}
+
+.player-panel::after {
+  background: rgba(244, 63, 94, .09);
+  box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .55), inset 0 0 26px rgba(255, 107, 157, .12);
+}
+
+.player-panel[data-active]::after {
+  opacity: 1;
+}
+
+.player-panel:not([data-active], .is-spotlit) {
+  opacity: .84;
+}
+
+.player-panel--side {
+  display: flex;
+  height: var(--card-h);
+  container-type: inline-size;
+  flex-direction: column;
+  padding: .75rem;
+}
+
+.player-panel--side .outfit-figure {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.player-panel--side .outfit-figure__sway {
+  height: 100%;
+  min-height: 0;
+}
+
+.player-panel--side .outfit-figure__svg {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
+.player-panel__info {
+  position: relative;
+  flex: none;
+  padding-top: .45rem;
+}
+
+.player-panel__name {
+  display: flex;
+  min-width: 0;
+  justify-content: center;
+  gap: .35rem;
+  color: #fff;
+  font-size: .95rem;
+  font-weight: 700;
+}
+
+.player-panel__stage {
+  font-size: .8125rem;
+  font-weight: 500;
+}
+
+.player-panel__count {
+  white-space: nowrap;
+}
+
+.player-panel--side .player-panel__count::before {
+  content: '· ';
+}
+
+.player-panel--mobile .player-panel__count {
+  display: block;
+}
+
+.player-panel__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .4rem;
+  margin-top: .5rem;
+  white-space: nowrap;
+}
+
+.player-panel__stats > div {
+  border-radius: .65rem;
+  background: rgba(0, 0, 0, .3);
+  padding: .35rem .2rem;
+}
+
+.player-panel__stats dt {
+  color: #d4d4d4;
+  font-size: .75rem;
+}
+
+.player-panel__stats dd {
+  color: #fff;
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+.player-panel__stats dd.text-amber-200,
+.player-panel__wallet {
+  color: #fde68a;
+}
+
+.player-panel__wallet {
+  margin-top: .15rem;
+  font-size: .8125rem;
+  font-weight: 700;
+}
+
+/* Narrow panels (tablets): one line per number instead of two cramped boxes. */
+@container (max-width: 9.5rem) {
+  .player-panel--side .player-panel__count {
+    display: block;
+  }
+
+  .player-panel--side .player-panel__count::before {
+    content: none;
+  }
+
+  .player-panel__stats {
+    grid-template-columns: minmax(0, 1fr);
+    gap: .25rem;
+  }
+
+  .player-panel__stats > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .3rem;
+    padding: .25rem .4rem;
+  }
+}
+
+.player-panel__boost {
+  position: absolute;
+  z-index: 2;
+  top: .55rem;
+  right: .55rem;
+  border: 1px solid rgba(253, 186, 116, .4);
+  border-radius: 999px;
+  background: rgba(67, 28, 8, .92);
+  padding: .1rem .55rem;
+  color: #fed7aa;
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.game-outfit-mobile {
+  display: none;
+}
+
+/* A garment comes off: the table goes dark, a warm light falls on the player. */
+.game-root[data-scene] .game-header,
+.game-root[data-scene] .game-stage__center {
+  filter: saturate(.55);
+  opacity: .22;
+}
+
+.game-root[data-scene] .player-panel:not(.is-spotlit) {
+  opacity: .2;
+}
+
+.player-panel::before {
+  /* No conic-gradient in the game: the first one on screen makes the GPU build a program
+     for half a second or more, right in the middle of the scene. */
+  background:
+    radial-gradient(ellipse 34% 96% at 50% -6%, rgba(255, 236, 200, .34), transparent),
+    radial-gradient(ellipse at 50% 0%, rgba(255, 214, 150, .28), rgba(60, 22, 34, .4) 68%);
+  box-shadow: inset 0 0 0 1px rgba(255, 214, 150, .75), 0 0 0 1px rgba(255, 214, 150, .3), 0 0 70px rgba(255, 180, 110, .34);
+}
+
+.player-panel.is-spotlit {
+  z-index: 5;
+  overflow: visible;
+  transform: scale(1.045);
+}
+
+.player-panel.is-spotlit::before {
+  opacity: 1;
+  transition-duration: .5s;
+}
+
+.player-panel.is-spotlit::after {
+  opacity: 0;
+}
+
+/* While a dialog covers the table, nothing behind it needs to move. */
+html[data-dialog-open] .game-stage *,
+html[data-dialog-open] .game-stage *::before,
+html[data-dialog-open] .game-stage *::after,
+html[data-dialog-open] .game-header *,
+html[data-dialog-open] .game-header *::before,
+html[data-dialog-open] .game-header *::after {
+  animation-play-state: paused !important;
+}
+
+/* ----- Phones ----- */
+@media (max-width: 767px) {
+  .game-root {
+    --card-h: min(30rem, max(24rem, calc(100svh - 26rem)));
+    --card-w: calc(var(--card-h) * 11 / 15);
+    --center-w: calc(100vw - 2rem);
+    --action-h: 5.75rem;
+  }
+
+  .game-stage {
+    display: block;
+    flex: none;
+    padding-top: .85rem;
+  }
+
+  .game-stage__side {
+    display: none;
+  }
+
+  .game-stage__center {
+    grid-template-rows: var(--card-h) auto;
+  }
+
+  .game-outfit-mobile {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .65rem;
+    margin-top: .75rem;
+  }
+
+  .player-panel--mobile {
+    display: grid;
+    min-height: 7.5rem;
+    grid-template-columns: 5.2rem minmax(0, 1fr);
+    align-items: center;
+    padding: .3rem .5rem;
+    text-align: left;
+  }
+
+  .player-panel--mobile .outfit-figure {
+    width: 5rem;
+  }
+
+  .player-panel--mobile .player-panel__info {
+    min-width: 0;
+    padding-top: 0;
+  }
+
+  .player-panel--mobile .player-panel__name {
+    justify-content: flex-start;
+    font-size: .8125rem;
+  }
+
+  .player-panel--mobile .player-panel__stage {
+    font-size: .75rem;
+  }
+
+  .table-panel {
+    max-height: none;
+  }
+
+  .final-choice {
+    --final-h: calc((100vw - 2rem - var(--final-gap) * 2) / 3 * 15 / 11);
+  }
+
+  .final-choice[data-count='1'] {
+    --final-h: 15rem;
+  }
+
+  .final-card__choose {
+    padding: 0 .7rem;
+    font-size: .8rem;
+  }
+
+  .final-card__side--front {
+    gap: .35rem;
+    padding: .5rem;
+  }
+
+  .turn-strip {
+    right: -4%;
+    left: -4%;
+  }
+}
+
+@media (max-width: 390px) {
+  .game-outfit-mobile {
+    gap: .4rem;
+  }
+
+  .player-panel--mobile {
+    grid-template-columns: 4.3rem minmax(0, 1fr);
+    padding-inline: .4rem;
+  }
+
+  .player-panel--mobile .outfit-figure {
+    width: 4.2rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-header,
+  .game-stage,
+  .game-stage__center,
+  .player-panel,
+  .player-panel::before,
+  .player-panel::after,
+  .choose-type__option,
+  .final-card__slot,
+  .final-choice__shop,
+  .table-deck,
+  .table-deck__layer,
+  .table-deck__layer .card-back,
+  .table-card__flip,
+  .game-header .game-header__fill {
+    transition-duration: .08s;
+  }
+
+  .table-card__content,
+  .table-card__flip[data-appear] {
+    animation: card-appear .08s backwards;
+  }
+
+  .final-card__flip {
+    transition: none;
+  }
+
+  .game-header__beat,
+  .table-deck[data-phase='shuffling'] .table-deck__layer,
+  .table-deck--position .table-deck__layer:last-child .card-back::after,
+  .final-choice__head,
+  .final-choice__shop,
+  .card-spark i {
+    animation: none;
+  }
+
+  .table-deck[data-idle]:hover .table-deck__layer:last-child .card-back,
+  .choose-type__option:not(:disabled):hover,
+  .final-card__slot:not(:disabled):hover,
+  .player-panel.is-spotlit {
+    transform: none;
+  }
+}

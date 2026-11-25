@@ -145,9 +145,15 @@ test('position deck covers the 6–10 star ladder and keeps one reusable mythic 
     positions.filter((card) => card.position?.family === 'oral').map(derivePositionDifficultyStars),
     [8, 8, 8],
   );
+  // The built-in Blow cards are stored as 10★, but 10★ is reserved for Have Sex
+  // (no band weights it), so they play as the hottest regular tier, 9★.
+  assert.deepEqual(
+    positions.filter((card) => card.position?.family === 'blowjob').map((card) => card.position?.difficultyStars),
+    [10, 10, 10],
+  );
   assert.deepEqual(
     positions.filter((card) => card.position?.family === 'blowjob').map(derivePositionDifficultyStars),
-    [10, 10, 10],
+    [9, 9, 9],
   );
   assert.deepEqual(
     positions.filter((card) => card.position?.family === 'handjob').map(derivePositionDifficultyStars),

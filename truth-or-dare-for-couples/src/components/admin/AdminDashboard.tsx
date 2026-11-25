@@ -150,9 +150,34 @@ const describeRevision = (revision: AdminRevision, cardLabel: (id: string) => st
   return `${operation} · ${type} · ${id}`;
 };
 
+const STANDARD_STARS = [1, 2, 3, 4, 5] as const;
+const REGULAR_POSITION_STARS = [6, 7, 8, 9] as const;
+
+/** True when every band's average star is at least the previous band's (heat only rises). */
+const isRisingCurve = (
+  bands: ReadonlyArray<{ starWeights: Record<number, number> }>,
+  stars: readonly number[],
+): boolean => {
+  let previous = -Infinity;
+  for (const band of bands) {
+    const total = stars.reduce((sum, star) => sum + Math.max(0, band.starWeights[star] ?? 0), 0);
+    if (total <= 0) return false;
+    const average = stars.reduce((sum, star) => sum + star * Math.max(0, band.starWeights[star] ?? 0), 0) / total;
+    if (average + 0.05 < previous) return false;
+    previous = average;
+  }
+  return true;
+};
+
 /** Fields the Admin should match so the game plays as designed (~70 min). */
 const getConfigIssues = (standard: ProgressionConfig, luxury: LuxuryProgressionConfig): string[] => {
   const issues: string[] = [];
+  if (!isRisingCurve(standard.bands, STANDARD_STARS)) {
+    issues.push('Độ khó bài thường theo mốc Tim Hồng đang đi lùi: có mốc sau dễ hơn mốc trước.');
+  }
+  if (!isRisingCurve(luxury.bands, REGULAR_POSITION_STARS)) {
+    issues.push('Độ khó Tư thế theo mốc Luxury đang đi lùi: chặng Tư thế nóng lên rồi lại nguội xuống (ví dụ một mốc giữa chỉ còn 6–7★).');
+  }
   if (standard.cardRemovalBonus !== DEFAULT_PROGRESSION_CONFIG.cardRemovalBonus) {
     issues.push(`Thưởng khi lá bài làm cởi đồ đang +${standard.cardRemovalBonus}%, khuyến nghị +${DEFAULT_PROGRESSION_CONFIG.cardRemovalBonus}%.`);
   }
@@ -172,6 +197,14 @@ const getConfigIssues = (standard: ProgressionConfig, luxury: LuxuryProgressionC
 
 const withRecommendedStandard = (config: ProgressionConfig): ProgressionConfig => ({
   ...config,
+  // Custom band weights are kept unless their difficulty curve goes backwards.
+  bands: isRisingCurve(config.bands, STANDARD_STARS)
+    ? config.bands
+    : DEFAULT_PROGRESSION_CONFIG.bands.map((band) => ({
+        ...band,
+        typeWeights: { ...band.typeWeights },
+        starWeights: { ...band.starWeights },
+      })),
   cardRemovalBonus: DEFAULT_PROGRESSION_CONFIG.cardRemovalBonus,
   starGains: { ...DEFAULT_PROGRESSION_CONFIG.starGains },
 });
@@ -181,7 +214,7 @@ const withRecommendedLuxury = (config: LuxuryProgressionConfig): LuxuryProgressi
   const anyEmpty = bands.some((band) => POSITION_DIFFICULTY_STARS.every((star) => (band.starWeights[star] ?? 0) <= 0));
   return {
     ...config,
-    bands: anyEmpty
+    bands: anyEmpty || !isRisingCurve(bands, REGULAR_POSITION_STARS)
       ? DEFAULT_LUXURY_PROGRESSION_CONFIG.bands.map((band) => ({ ...band, starWeights: { ...band.starWeights } }))
       : bands,
     starGains: {
@@ -211,9 +244,9 @@ const Panel: React.FC<{ title?: string; action?: React.ReactNode; className?: st
 
 const Stat: React.FC<{ label: string; value: React.ReactNode; tone?: string; hint?: string }> = ({ label, value, tone = 'text-neutral-50', hint }) => (
   <div className="min-w-0 rounded-xl bg-white/[0.035] px-3 py-2.5">
-    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-500">{label}</p>
+    <p className="truncate text-xs font-semibold text-neutral-400">{label}</p>
     <p className={`mt-0.5 text-xl font-semibold tabular-nums ${tone}`}>{value}</p>
-    {hint && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{hint}</p>}
+    {hint && <p className="mt-0.5 truncate text-xs text-neutral-400">{hint}</p>}
   </div>
 );
 
@@ -323,6 +356,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       passionate: standard.filter((card) => card.level === 'passionate').length,
       position: playable.filter((card) => getCardDeck(card) === 'position').length,
       custom: playable.filter((card) => card.isCustom).length,
+      // Regular Position cards saved at 10★ (or legacy 5) — the old editor did this for Blow.
+      regularTenStar: playable.filter((card) =>
+        getCardDeck(card) === 'position' && card.position?.family !== 'have_sex' &&
+        (card.position?.difficultyStars === 10 || card.position?.difficultyStars === 5)).length,
     };
   }, [cards]);
 
@@ -348,6 +385,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       tone: 'warn' as const,
       text: `Cấu hình game lệch ${configIssues.length} điểm so với khuyến nghị cho ván ~70 phút.`,
       action: { label: 'Sửa cấu hình', go: 'config' as AdminSection },
+    } : null,
+    stats.regularTenStar > 0 ? {
+      id: 'ten-star',
+      tone: 'warn' as const,
+      text: `${stats.regularTenStar} lá Tư thế thường đang lưu 10★ (mức dành riêng cho Have Sex). Game tạm tính các lá này là 9★; mở từng lá, chọn 6–9★ rồi lưu lại.`,
+      action: { label: 'Xem thẻ', go: 'cards' as AdminSection },
     } : null,
     stats.frames > 0 ? {
       id: 'frames',
@@ -418,10 +461,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const renderRevisionList = (limit: number) => {
-    if (revisions === null) return <p className="text-xs text-neutral-500">Đang tải lịch sử…</p>;
+    if (revisions === null) return <p className="text-xs text-neutral-400">Đang tải lịch sử…</p>;
     if (revisions.length === 0) {
       return (
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-neutral-400">
           {revisionsError ? `Chưa đọc được lịch sử (${revisionsError}).` : 'Chưa có thay đổi nào được ghi lại.'}
         </p>
       );
@@ -430,12 +473,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <ol className="divide-y divide-white/[0.06]">
         {revisions.slice(0, limit).map((revision) => (
           <li key={`${revision.id}-${revision.dataset_revision}`} className="flex items-start gap-3 py-2.5">
-            <span className="mt-0.5 shrink-0 rounded-md bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-neutral-400">
+            <span className="mt-0.5 shrink-0 rounded-md bg-white/[0.05] px-1.5 py-0.5 font-mono text-xs text-neutral-400">
               r{revision.dataset_revision}
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-neutral-200">{describeRevision(revision, cardLabel)}</p>
-              <p className="mt-0.5 text-[10px] text-neutral-500">
+              <p className="mt-0.5 text-xs text-neutral-400">
                 {formatDateTime(revision.created_at)}{revision.actor_email ? ` · ${revision.actor_email}` : ''}
               </p>
             </div>
@@ -455,7 +498,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-neutral-100">{sync.label}</p>
-              <p className="mt-0.5 text-[11px] text-neutral-500">Bản dữ liệu r{catalogSync.datasetRevision}</p>
+              <p className="mt-0.5 text-xs text-neutral-400">Bản dữ liệu r{catalogSync.datasetRevision}</p>
             </div>
           </div>
         </Panel>
@@ -468,7 +511,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <p className="text-sm font-semibold text-neutral-100">
                 {playerStats ? `${playerStats.online} đang chơi` : 'Chưa có số liệu'}
               </p>
-              <p className="mt-0.5 text-[11px] text-neutral-500">
+              <p className="mt-0.5 text-xs text-neutral-400">
                 {playerStats ? `${playerStats.activeToday} người trong 24 giờ · ${playerStats.total} tổng` : 'Cần kết nối cloud'}
               </p>
             </div>
@@ -481,7 +524,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-neutral-100">Sao lưu gần nhất</p>
-              <p className="mt-0.5 text-[11px] text-neutral-500">
+              <p className="mt-0.5 text-xs text-neutral-400">
                 {catalogSync.lastBackupAt ? `${formatRelative(catalogSync.lastBackupAt)} · ${formatDateTime(catalogSync.lastBackupAt)}` : 'Chưa có'}
               </p>
             </div>
@@ -507,7 +550,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => goTo(todo.action.go)}
-                  className="flex min-h-9 shrink-0 items-center gap-1 self-start rounded-full border border-white/15 px-3 text-[11px] font-semibold text-neutral-100 hover:border-amber-200/40 hover:text-amber-100 sm:self-auto"
+                  className="flex min-h-9 shrink-0 items-center gap-1 self-start rounded-full border border-white/15 px-3 text-xs font-semibold text-neutral-100 hover:border-amber-200/40 hover:text-amber-100 sm:self-auto"
                 >
                   {todo.action.label} <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
@@ -521,13 +564,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <Panel
           title="Kho thẻ"
           action={(
-            <button type="button" onClick={() => goTo('cards')} className="flex items-center gap-1 text-[11px] font-semibold text-amber-200 hover:text-amber-100">
+            <button type="button" onClick={() => goTo('cards')} className="flex items-center gap-1 text-xs font-semibold text-amber-200 hover:text-amber-100">
               Quản lý thẻ <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           )}
         >
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Stat label="Đang dùng" value={stats.total} tone="text-amber-100" hint="lá người chơi rút được" />
+            <Stat label="Đang dùng" value={stats.total} tone="text-amber-100" hint="lá rút được" />
             <Stat label="Sự thật" value={stats.truth} tone="text-sky-200" />
             <Stat label="Thử thách" value={stats.dare} tone="text-rose-200" />
             <Stat label="Tư thế" value={stats.position} tone="text-violet-200" />
@@ -569,7 +612,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <Panel
         title="Thay đổi gần đây"
         action={(
-          <button type="button" onClick={() => goTo('data')} className="flex items-center gap-1 text-[11px] font-semibold text-amber-200 hover:text-amber-100">
+          <button type="button" onClick={() => goTo('data')} className="flex items-center gap-1 text-xs font-semibold text-amber-200 hover:text-amber-100">
             Xem tất cả <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         )}
@@ -577,7 +620,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {renderRevisionList(6)}
       </Panel>
 
-      <p className="px-1 text-[11px] leading-relaxed text-neutral-500">
+      <p className="px-1 text-xs leading-relaxed text-neutral-400">
         Thẻ và cấu hình bạn lưu ở đây được ghi lên cloud ngay. Người chơi nhận bản mới khi mở lại game hoặc tải lại trang.
       </p>
     </div>
@@ -609,8 +652,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div role="alertdialog" aria-label="Xác nhận áp dụng cấu hình khuyến nghị" className="flex flex-col gap-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-xs text-neutral-200">Chỉ đổi các điểm ở trên, phần còn lại giữ nguyên. Áp dụng cho mọi người chơi?</span>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setConfirmRecommended(false)} className="min-h-9 rounded-full border border-white/15 px-3 text-[11px] font-semibold text-neutral-300">Hủy</button>
-                    <button type="button" onClick={applyRecommended} className="min-h-9 rounded-full bg-amber-200 px-3 text-[11px] font-bold text-[#1a1008]">Áp dụng</button>
+                    <button type="button" onClick={() => setConfirmRecommended(false)} className="min-h-9 rounded-full border border-white/15 px-3 text-xs font-semibold text-neutral-300">Hủy</button>
+                    <button type="button" onClick={applyRecommended} className="min-h-9 rounded-full bg-amber-200 px-3 text-xs font-bold text-[#1a1008]">Áp dụng</button>
                   </div>
                 </div>
               )}
@@ -620,7 +663,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Panel title="Tim Hồng · bài thường">
-            <p className="mb-3 text-[11px] text-neutral-500">Mỗi lá hoàn thành cộng % theo số sao. Đầy 100% thì mở Bộ Tư thế.</p>
+            <p className="mb-3 text-xs text-neutral-400">Mỗi lá hoàn thành cộng % theo số sao. Đầy 100% thì mở Bộ Tư thế.</p>
             <div className="grid grid-cols-5 gap-1.5">
               {DIFFICULTY_STARS.map((star) => (
                 <Stat key={star} label={`${star}★`} value={`+${progressionConfig.starGains[star]}`} tone="text-rose-100" />
@@ -628,8 +671,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
             <p className="mt-3 text-xs text-neutral-300">Lá bài làm cởi đồ: <strong className="text-rose-100">+{progressionConfig.cardRemovalBonus}%</strong></p>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[280px] text-left text-[11px]">
-                <thead className="text-neutral-500">
+              <table className="w-full min-w-[280px] text-left text-xs">
+                <thead className="text-neutral-400">
                   <tr><th className="py-1 font-medium">Chặng</th><th className="py-1 font-medium">Sự thật / Thử thách</th></tr>
                 </thead>
                 <tbody className="text-neutral-300">
@@ -644,7 +687,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </Panel>
           <Panel title="Tim Luxury · Bộ Tư thế">
-            <p className="mb-3 text-[11px] text-neutral-500">Mỗi lá tư thế hoàn thành cộng % theo số sao. Đầy thì tới màn chọn 1 trong 3 lá Have Sex.</p>
+            <p className="mb-3 text-xs text-neutral-400">Mỗi lá tư thế hoàn thành cộng % theo số sao. Đầy thì tới màn chọn 1 trong 3 lá Have Sex.</p>
             <div className="grid grid-cols-4 gap-1.5">
               {POSITION_DIFFICULTY_STARS.filter((star) => star < 10).map((star) => (
                 <Stat key={star} label={`✦${star}`} value={`+${luxuryProgressionConfig.starGains[star]}`} tone="text-violet-100" />
@@ -652,8 +695,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
             <p className="mt-3 text-xs text-neutral-300">Cơ hội rút Have Sex sớm (80–99%): <strong className="text-violet-100">{luxuryProgressionConfig.finalCardChance}%</strong></p>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[280px] text-left text-[11px]">
-                <thead className="text-neutral-500">
+              <table className="w-full min-w-[280px] text-left text-xs">
+                <thead className="text-neutral-400">
                   <tr><th className="py-1 font-medium">Chặng</th>{POSITION_DIFFICULTY_STARS.map((star) => <th key={star} className="py-1 font-medium">✦{star}</th>)}</tr>
                 </thead>
                 <tbody className="text-neutral-300">
@@ -689,13 +732,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
       <Panel title="Vào game gần đây">
         {!playerStats ? (
-          <p className="text-xs text-neutral-500">Chưa đọc được số liệu người chơi. Trang này cần kết nối cloud.</p>
+          <p className="text-xs text-neutral-400">Chưa đọc được số liệu người chơi. Trang này cần kết nối cloud.</p>
         ) : playerStats.recent.length === 0 ? (
-          <p className="text-xs text-neutral-500">Chưa có ai vào game.</p>
+          <p className="text-xs text-neutral-400">Chưa có ai vào game.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-left text-xs">
-              <thead className="text-[10px] uppercase tracking-[0.1em] text-neutral-500">
+              <thead className="text-xs text-neutral-400">
                 <tr>
                   <th className="py-2 font-medium">Tên hiển thị</th>
                   <th className="py-2 font-medium">Lần cuối</th>
@@ -721,7 +764,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </table>
           </div>
         )}
-        {playerStats && <p className="mt-3 text-[10px] text-neutral-500">Cập nhật {formatRelative(playerStats.measuredAt)} · tự làm mới mỗi 30 giây.</p>}
+        {playerStats && <p className="mt-3 text-xs text-neutral-400">Cập nhật {formatRelative(playerStats.measuredAt)} · tự làm mới mỗi 30 giây.</p>}
       </Panel>
     </div>
   );
@@ -736,7 +779,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="min-w-0 text-xs">
             <p className="text-sm font-semibold text-neutral-100">{sync.label} · r{catalogSync.datasetRevision}</p>
             <p className="mt-1 leading-relaxed text-neutral-400">{catalogSync.message || 'Thẻ, ảnh và cấu hình được lưu trên Cloudflare.'}</p>
-            <p className="mt-1 text-neutral-500">Sao lưu gần nhất: {formatDateTime(catalogSync.lastBackupAt)}</p>
+            <p className="mt-1 text-neutral-400">Sao lưu gần nhất: {formatDateTime(catalogSync.lastBackupAt)}</p>
           </div>
         </div>
       </Panel>
@@ -744,12 +787,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="grid gap-3 sm:grid-cols-3">
         <Panel>
           <p className="text-sm font-semibold text-neutral-100">Tải file sao lưu</p>
-          <p className="mt-1 min-h-[3rem] text-[11px] leading-relaxed text-neutral-500">Tải toàn bộ thẻ, ảnh và cấu hình hiện tại về máy dưới dạng file .zip.</p>
+          <p className="mt-1 min-h-[3rem] text-xs leading-relaxed text-neutral-400">Tải toàn bộ thẻ, ảnh và cấu hình hiện tại về máy dưới dạng file .zip.</p>
           <div className="mt-3"><ActionButton icon={Download} disabled={busy} onClick={() => void runAction(onExportCatalog)}>Tải về</ActionButton></div>
         </Panel>
         <Panel>
           <p className="text-sm font-semibold text-neutral-100">Khôi phục từ file</p>
-          <p className="mt-1 min-h-[3rem] text-[11px] leading-relaxed text-neutral-500">Chọn file .zip đã tải. Hệ thống kiểm tra trước, hỏi lại, rồi tự sao lưu bản cũ trước khi thay.</p>
+          <p className="mt-1 min-h-[3rem] text-xs leading-relaxed text-neutral-400">Chọn file .zip đã tải. Hệ thống kiểm tra trước, hỏi lại, rồi tự sao lưu bản cũ trước khi thay.</p>
           <div className="mt-3"><ActionButton icon={Upload} disabled={busy} onClick={() => importInputRef.current?.click()}>Chọn file…</ActionButton></div>
           <input
             ref={importInputRef}
@@ -766,7 +809,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </Panel>
         <Panel>
           <p className="text-sm font-semibold text-neutral-100">Sao lưu trên cloud</p>
-          <p className="mt-1 min-h-[3rem] text-[11px] leading-relaxed text-neutral-500">Lưu một bản chụp vào kho R2 của Cloudflare, không cần tải về máy.</p>
+          <p className="mt-1 min-h-[3rem] text-xs leading-relaxed text-neutral-400">Lưu một bản chụp vào kho R2 của Cloudflare, không cần tải về máy.</p>
           <div className="mt-3"><ActionButton icon={DatabaseBackup} disabled={busy || !sync.connected} onClick={() => void runAction(onCreateCloudBackup)}>Sao lưu ngay</ActionButton></div>
         </Panel>
       </div>
@@ -774,7 +817,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <Panel
         title="Lịch sử thay đổi"
         action={(
-          <button type="button" onClick={loadRevisions} className="flex items-center gap-1 text-[11px] font-semibold text-amber-200 hover:text-amber-100">
+          <button type="button" onClick={loadRevisions} className="flex items-center gap-1 text-xs font-semibold text-amber-200 hover:text-amber-100">
             <History className="h-3.5 w-3.5" aria-hidden="true" /> Làm mới
           </button>
         )}
@@ -791,7 +834,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Sidebar (desktop) */}
       <aside className="sticky top-0 hidden h-screen flex-col border-r border-white/[0.07] bg-[#120b10]/95 px-4 py-5 lg:flex">
         <div className="px-2">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-amber-200/70">Truth or Dare</p>
+          <p className="text-xs font-semibold text-amber-200/90">Truth or Dare</p>
           <p className="mt-1 font-serif-romantic text-xl font-bold text-neutral-50">Quản trị game</p>
         </div>
         <nav aria-label="Mục quản trị" className="mt-6 flex flex-1 flex-col gap-1">
@@ -811,7 +854,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span className="flex-1">{item.label}</span>
                 {item.badge && (
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${item.badge === '!' ? 'bg-amber-300 text-[#1a1008]' : 'bg-white/[0.08] text-neutral-300'}`}>
+                  <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold tabular-nums ${item.badge === '!' ? 'bg-amber-300 text-[#1a1008]' : 'bg-white/[0.08] text-neutral-300'}`}>
                     {item.badge}
                   </span>
                 )}
@@ -820,12 +863,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           })}
         </nav>
         <div className="space-y-1 border-t border-white/[0.07] pt-4">
-          <p className={`flex items-center gap-2 px-2 pb-1 text-[11px] ${sync.connected ? 'text-emerald-300' : 'text-amber-200'}`}>
+          <p className={`flex items-center gap-2 px-2 pb-1 text-xs ${sync.connected ? 'text-emerald-300' : 'text-amber-200'}`}>
             {sync.connected ? <Cloud className="h-3.5 w-3.5" aria-hidden="true" /> : <CloudOff className="h-3.5 w-3.5" aria-hidden="true" />}
             {sync.label}
           </p>
           {adminEmail && (
-            <p className="flex items-center gap-2 truncate px-2 pb-1 text-[11px] text-neutral-400" title={adminEmail}>
+            <p className="flex items-center gap-2 truncate px-2 pb-1 text-xs text-neutral-400" title={adminEmail}>
               <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-200" aria-hidden="true" />
               <span className="truncate">{adminEmail}</span>
             </p>
@@ -833,7 +876,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <a href="/" className="flex min-h-10 items-center gap-2 rounded-xl px-2 text-xs text-neutral-300 hover:bg-white/[0.04] hover:text-neutral-100">
             <Gamepad2 className="h-3.5 w-3.5" aria-hidden="true" /> Về trang người chơi
           </a>
-          <a href={ADMIN_LOGOUT_PATH} className="flex min-h-10 items-center gap-2 rounded-xl px-2 text-xs text-neutral-500 hover:bg-white/[0.04] hover:text-rose-200">
+          <a href={ADMIN_LOGOUT_PATH} className="flex min-h-10 items-center gap-2 rounded-xl px-2 text-xs text-neutral-400 hover:bg-white/[0.04] hover:text-rose-200">
             <LogOut className="h-3.5 w-3.5" aria-hidden="true" /> Đăng xuất admin
           </a>
         </div>
@@ -845,13 +888,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="flex items-center justify-between gap-3 px-4 pt-3">
             <div className="min-w-0">
               <p className="font-serif-romantic text-lg font-bold text-neutral-50">Quản trị game</p>
-              <span className={`flex items-center gap-1.5 text-[11px] ${sync.connected ? 'text-emerald-300' : 'text-amber-200'}`}>
+              <span className={`flex items-center gap-1.5 text-xs ${sync.connected ? 'text-emerald-300' : 'text-amber-200'}`}>
                 {sync.connected ? <Cloud className="h-3.5 w-3.5" aria-hidden="true" /> : <CloudOff className="h-3.5 w-3.5" aria-hidden="true" />}
                 {sync.connected ? `Đã kết nối · r${catalogSync.datasetRevision}` : 'Chưa đồng bộ'}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <a href="/" className="flex min-h-9 items-center gap-1.5 rounded-full border border-white/12 px-3 text-[11px] font-semibold text-neutral-200">
+              <a href="/" className="flex min-h-9 items-center gap-1.5 rounded-full border border-white/12 px-3 text-xs font-semibold text-neutral-200">
                 <Gamepad2 className="h-3.5 w-3.5" aria-hidden="true" /> Trang chơi
               </a>
               <a href={ADMIN_LOGOUT_PATH} aria-label="Đăng xuất admin" title="Đăng xuất admin" className="grid h-9 w-9 place-items-center rounded-full border border-white/12 text-neutral-400">
@@ -876,7 +919,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                   {item.label}
                   {item.badge && item.id !== 'cards' && (
-                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${active ? 'bg-black/15' : item.badge === '!' ? 'bg-amber-300 text-[#1a1008]' : 'bg-white/10'}`}>{item.badge}</span>
+                    <span className={`rounded-full px-1.5 text-xs font-bold ${active ? 'bg-black/15' : item.badge === '!' ? 'bg-amber-300 text-[#1a1008]' : 'bg-white/10'}`}>{item.badge}</span>
                   )}
                 </button>
               );

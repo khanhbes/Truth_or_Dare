@@ -20,6 +20,8 @@ const SLOT_ORDER: Record<PlayerPresentation, GarmentSlot[]> = {
 
 const FALLBACK_COLOR = '#FF6B9D';
 
+const sameColor = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
 export const OutfitConfigurator: React.FC<OutfitConfiguratorProps> = ({
   value,
   onChange,
@@ -45,6 +47,7 @@ export const OutfitConfigurator: React.FC<OutfitConfiguratorProps> = ({
 
   const selectedGarment = value.garments[editingSlot];
   const garmentCount = useMemo(() => slots.filter((slot) => Boolean(value.garments[slot])).length, [slots, value.garments]);
+  const slotName = GARMENT_LABELS[editingSlot].toLocaleLowerCase('vi');
 
   const emitGarments = (garments: OutfitConfig['garments']) => {
     onChange({ presentation, garments });
@@ -74,129 +77,146 @@ export const OutfitConfigurator: React.FC<OutfitConfiguratorProps> = ({
     emitGarments({ ...value.garments, [editingSlot]: next });
   };
 
+  const styleLabel = (slot: GarmentSlot) => {
+    const garment = value.garments[slot];
+    if (!garment) return 'Chưa mặc';
+    return getGarmentStyles(presentation, slot).find((style) => style.id === garment.styleId)?.label ?? 'Đang mặc';
+  };
+
   const availableStyles = getGarmentStyles(presentation, editingSlot);
+  const usingCustomColor = Boolean(selectedGarment) && !GARMENT_COLORS.some((color) => sameColor(color.value, selectedGarment!.color));
 
   return (
-    <section className={`outfit-configurator ${className}`.trim()} aria-label={label ?? `Trang phục ${presentation === 'male' ? 'nam' : 'nữ'}`}>
-      <header className="outfit-configurator__header">
-        <div>
-          <p className="outfit-configurator__eyebrow">{presentation === 'male' ? 'Nhân vật nam' : 'Nhân vật nữ'}</p>
-          <h4>{label ?? (presentation === 'male' ? 'Trang phục của Anh' : 'Trang phục của Em')}</h4>
-        </div>
-        <span className="outfit-configurator__count" aria-label={`${garmentCount} món đang mặc`}>
-          <Shirt aria-hidden="true" /> {garmentCount}/{slots.length}
-        </span>
-      </header>
-
+    <section className={`outfit-configurator ${className}`.trim()} aria-label={label ? `Trang phục của ${label}` : `Trang phục ${presentation === 'male' ? 'nam' : 'nữ'}`}>
       <div className="outfit-configurator__workspace">
-        <OutfitFigure
-          outfit={{ ...value, presentation }}
-          editingSlot={editingSlot}
-          selectedSlot={editingSlot}
-          compact
-          name={label}
-        />
+        <div className="outfit-configurator__stage">
+          <OutfitFigure
+            outfit={{ ...value, presentation }}
+            editingSlot={editingSlot}
+            selectedSlot={editingSlot}
+            compact
+            ariaLabel={`Xem trước trang phục của ${label ?? (presentation === 'male' ? 'Anh' : 'Em')}`}
+          />
+          <span className="outfit-configurator__count" aria-label={`${garmentCount} trên ${slots.length} món đang mặc`}>
+            <Shirt aria-hidden="true" /> {garmentCount}/{slots.length} món
+          </span>
+        </div>
 
-        <div className="outfit-configurator__controls">
-          <div className="outfit-configurator__slots" aria-label="Chọn các món đồ">
-            {slots.map((slot) => {
-              const included = Boolean(value.garments[slot]);
-              const selected = editingSlot === slot;
-              return (
-                <div
-                  key={slot}
-                  role="group"
-                  aria-label={GARMENT_LABELS[slot]}
-                  className={`grid min-h-12 grid-cols-[minmax(0,1fr)_3rem] overflow-hidden rounded-xl border transition duration-200 motion-reduce:transition-none ${selected ? 'border-rose-400/75 bg-rose-500/[0.12] shadow-[0_0_0_2px_rgba(251,113,133,0.1)]' : included ? 'border-white/10 bg-rose-900/15' : 'border-white/10 bg-white/[0.035]'}`}
+        <div className="outfit-configurator__slots" role="list" aria-label="Các món đồ">
+          {slots.map((slot) => {
+            const garment = value.garments[slot];
+            const included = Boolean(garment);
+            const selected = editingSlot === slot;
+            return (
+              <div key={slot} role="listitem" className={`outfit-slot ${selected ? 'is-editing' : ''} ${included ? 'is-included' : ''}`}>
+                <button
+                  type="button"
+                  className="outfit-slot__select"
+                  aria-pressed={selected}
+                  aria-label={`Chỉnh ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}: ${styleLabel(slot)}`}
+                  disabled={disabled}
+                  onClick={() => setEditingSlot(slot)}
                 >
-                  <button
-                    type="button"
-                    aria-pressed={selected}
-                    disabled={disabled}
-                    onClick={() => setEditingSlot(slot)}
-                    className="flex min-h-12 min-w-0 flex-col items-start justify-center px-2.5 py-1.5 text-left transition hover:bg-white/[0.055] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-300 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <span className={`truncate text-xs font-bold ${included ? 'text-rose-100' : 'text-neutral-300'}`}>
-                      {GARMENT_LABELS[slot]}
-                    </span>
-                    <span className="text-[9px] font-medium text-neutral-500">
-                      {included ? 'Đang mặc · Chạm để chỉnh' : 'Chưa thêm · Chạm để xem'}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${included ? 'Bỏ' : 'Thêm'} ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}`}
-                    aria-pressed={included}
-                    disabled={disabled}
-                    onClick={() => toggleGarment(slot)}
-                    className={`flex min-h-12 min-w-12 items-center justify-center border-l border-white/10 transition hover:bg-rose-500/20 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-300 disabled:cursor-not-allowed disabled:opacity-45 ${included ? 'text-rose-200' : 'text-neutral-300'}`}
-                  >
-                    {included ? <Minus className="h-4 w-4" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                  <span
+                    className="outfit-slot__swatch"
+                    style={garment ? ({ '--swatch-color': garment.color } as React.CSSProperties) : undefined}
+                    aria-hidden="true"
+                  />
+                  <span className="outfit-slot__text">
+                    <span className="outfit-slot__name">{GARMENT_LABELS[slot]}</span>
+                    <span className="outfit-slot__style">{styleLabel(slot)}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="outfit-slot__toggle"
+                  aria-label={`${included ? 'Bỏ' : 'Thêm'} ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}`}
+                  aria-pressed={included}
+                  disabled={disabled}
+                  onClick={() => toggleGarment(slot)}
+                >
+                  {included ? <Minus aria-hidden="true" /> : <Plus aria-hidden="true" />}
+                  <span>{included ? 'Bỏ ra' : 'Thêm'}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
 
-          <div className={`outfit-configurator__editor ${selectedGarment ? '' : 'is-disabled'}`} aria-live="polite">
-            {selectedGarment ? (
-              <>
-                <div className="outfit-configurator__field">
-                  <span className="outfit-configurator__field-label">Kiểu {GARMENT_LABELS[editingSlot].toLocaleLowerCase('vi')}</span>
-                  <div className="outfit-configurator__styles">
-                    {availableStyles.map((style) => (
+        <div className="outfit-configurator__editor" aria-live="polite">
+          <p className="outfit-configurator__editing">
+            Đang chỉnh: <strong>{GARMENT_LABELS[editingSlot]}</strong>
+          </p>
+          {selectedGarment ? (
+            <>
+              <div className="outfit-configurator__field" role="group" aria-label={`Kiểu ${slotName}`}>
+                <span className="outfit-configurator__field-label">Kiểu</span>
+                <div className="outfit-configurator__styles">
+                  {availableStyles.map((style) => {
+                    const active = selectedGarment.styleId === style.id;
+                    return (
                       <button
                         key={style.id}
                         type="button"
                         disabled={disabled}
-                        aria-pressed={selectedGarment.styleId === style.id}
+                        aria-pressed={active}
                         onClick={() => updateSelectedGarment({ styleId: style.id })}
-                        className={selectedGarment.styleId === style.id ? 'is-selected' : ''}
+                        className={active ? 'is-selected' : ''}
                       >
-                        {selectedGarment.styleId === style.id && <Check aria-hidden="true" />}
+                        {active && <Check aria-hidden="true" />}
                         {style.label}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
+              </div>
 
-                <div className="outfit-configurator__field">
-                  <span className="outfit-configurator__field-label">Màu sắc</span>
-                  <div className="outfit-configurator__palette">
-                    {GARMENT_COLORS.map((color) => (
+              <div className="outfit-configurator__field" role="group" aria-label={`Màu ${slotName}`}>
+                <span className="outfit-configurator__field-label">Màu</span>
+                <div className="outfit-configurator__palette">
+                  {GARMENT_COLORS.map((color) => {
+                    const active = sameColor(selectedGarment.color, color.value);
+                    return (
                       <button
                         key={color.id}
                         type="button"
                         disabled={disabled}
-                        className={selectedGarment.color.toLowerCase() === color.value.toLowerCase() ? 'is-selected' : ''}
+                        className={active ? 'is-selected' : ''}
                         style={{ '--swatch-color': color.value } as React.CSSProperties}
                         aria-label={`Màu ${color.label}`}
-                        aria-pressed={selectedGarment.color.toLowerCase() === color.value.toLowerCase()}
+                        aria-pressed={active}
                         title={color.label}
                         onClick={() => updateSelectedGarment({ color: color.value })}
                       >
                         <span aria-hidden="true" />
                       </button>
-                    ))}
-                    <label className="outfit-configurator__custom-color" title="Chọn màu tùy ý">
-                      <span>Tự chọn</span>
-                      <input
-                        type="color"
-                        disabled={disabled}
-                        value={selectedGarment.color}
-                        aria-label={`Màu tùy chọn cho ${GARMENT_LABELS[editingSlot].toLocaleLowerCase('vi')}`}
-                        onChange={(event) => updateSelectedGarment({ color: event.target.value.toUpperCase() })}
-                      />
-                    </label>
-                  </div>
+                    );
+                  })}
+                  <label
+                    className={`outfit-configurator__custom-color ${usingCustomColor ? 'is-selected' : ''}`}
+                    title="Chọn màu khác"
+                    style={usingCustomColor ? ({ '--swatch-color': selectedGarment.color } as React.CSSProperties) : undefined}
+                  >
+                    <span aria-hidden="true" />
+                    <input
+                      type="color"
+                      disabled={disabled}
+                      value={selectedGarment.color}
+                      aria-label={`Chọn màu khác cho ${slotName}`}
+                      onChange={(event) => updateSelectedGarment({ color: event.target.value.toUpperCase() })}
+                    />
+                  </label>
                 </div>
-              </>
-            ) : (
+              </div>
+            </>
+          ) : (
+            <div className="outfit-configurator__empty">
+              <p>{label ?? 'Nhân vật'} bắt đầu ván mà không mặc {slotName}.</p>
               <button type="button" disabled={disabled} className="outfit-configurator__add" onClick={() => toggleGarment(editingSlot)}>
-                <Plus aria-hidden="true" /> Thêm {GARMENT_LABELS[editingSlot].toLocaleLowerCase('vi')}
+                <Plus aria-hidden="true" /> Thêm {slotName}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </section>

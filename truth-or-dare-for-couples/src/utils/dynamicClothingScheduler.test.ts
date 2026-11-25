@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CLOTHING_CATCH_UP_PERCENT,
   CLOTHING_SCHEDULE_START_PERCENT,
   INNER_LAYER_WINDOW,
   OUTER_LAYER_WINDOW,
@@ -8,7 +9,9 @@ import {
   consumeScheduledRemoval,
   createDynamicClothingSchedule,
   getActiveClothingRemovalTarget,
+  getTruthLockReason,
   injectClothingDirective,
+  shouldForceClothingDare,
   shouldInjectClothingDirective,
   updateDynamicClothingScheduler,
 } from './dynamicClothingScheduler';
@@ -30,19 +33,35 @@ test('dynamic schedule creates exact garment counts for both players (3 for male
   assert.equal(femaleTriggers.length, 4);
   assert.deepEqual(schedule.targetGarmentCounts, [3, 4]);
 
-  // Triggers are sorted chronologically, never before 20%, with 4 outer items in the outer window and 3 inner items in the inner window
-  for (let i = 0; i < schedule.items.length; i++) {
-    const item = schedule.items[i];
-    assert.ok(item.triggerIntimacyPercent >= CLOTHING_SCHEDULE_START_PERCENT && item.triggerIntimacyPercent <= 95);
-    if (i < 4) {
-      assert.ok(item.triggerIntimacyPercent >= OUTER_LAYER_WINDOW[0] && item.triggerIntimacyPercent <= OUTER_LAYER_WINDOW[1]);
-    } else {
-      assert.ok(item.triggerIntimacyPercent >= INNER_LAYER_WINDOW[0] && item.triggerIntimacyPercent <= INNER_LAYER_WINDOW[1]);
-    }
-    if (i > 0) {
-      assert.ok(item.triggerIntimacyPercent >= schedule.items[i - 1].triggerIntimacyPercent);
-    }
-  }
+  // Triggers are sorted chronologically, never before 20%: 4 outer triggers sit in
+  // the outer window and the 3 inner ones in the inner window (the windows overlap,
+  // so a sorted position does not tell which layer a trigger belongs to).
+  const percents = schedule.items.map((item) => item.triggerIntimacyPercent);
+  assert.ok(percents.every((percent) => percent >= CLOTHING_SCHEDULE_START_PERCENT && percent <= INNER_LAYER_WINDOW[1]));
+  assert.ok(percents.filter((percent) => percent <= OUTER_LAYER_WINDOW[1]).length >= 4);
+  assert.ok(percents.filter((percent) => percent >= INNER_LAYER_WINDOW[0]).length >= 3);
+  for (let i = 1; i < percents.length; i++) assert.ok(percents[i] >= percents[i - 1]);
+});
+
+test('clothing triggers are spread out instead of bunching up at the end of the level', () => {
+  // The last half of the garments must not all wait for the final stretch.
+  assert.ok(OUTER_LAYER_WINDOW[1] <= 65, 'outer layers are off by ~65%');
+  assert.ok(INNER_LAYER_WINDOW[0] <= OUTER_LAYER_WINDOW[1], 'inner layers start before the outer ones end');
+  assert.ok(INNER_LAYER_WINDOW[1] < 95);
+});
+
+test('a due removal lets one draw pass, then forces a Dare; from the catch-up level it always does', () => {
+  const trigger = { itemId: 'strip-0-1' };
+  // Nothing due: never forced.
+  assert.equal(shouldForceClothingDare(null, null, 99), false);
+  // First draw after becoming due: free (a Truth can come up).
+  assert.equal(shouldForceClothingDare(trigger, null, 40), false);
+  assert.equal(shouldForceClothingDare(trigger, 'another-item', 40), false);
+  // It has waited one draw without being attached: the next draw is a Dare.
+  assert.equal(shouldForceClothingDare(trigger, trigger.itemId, 40), true);
+  // Near the end it never waits.
+  assert.equal(shouldForceClothingDare(trigger, null, CLOTHING_CATCH_UP_PERCENT), true);
+  assert.equal(shouldForceClothingDare(trigger, null, CLOTHING_CATCH_UP_PERCENT - 1), false);
 });
 
 test('getActiveClothingRemovalTarget fires when intimacy reaches trigger threshold', () => {
@@ -129,4 +148,30 @@ test('shouldInjectClothingDirective only allows standard Dare cards without exis
     afterPenalty.items.filter((item) => item.targetPlayerIndex === 1 && item.status === 'completed').length,
     1,
   );
+});
+
+test('a skip penalty that already removed the scheduled garment does not revive that removal', () => {
+  const outfits = [createOutfitState(MALE_OUTFIT_3, 0), createOutfitState(FEMALE_OUTFIT_4, 1)] as const;
+  const schedule = createDynamicClothingSchedule(outfits, () => 0.25);
+  const trigger = schedule.items.find((item) => item.targetPlayerIndex === 0)!;
+  // The performer skips, takes the clothing penalty (consumes their earliest item),
+  // and only then is the skipped trigger reported back to the scheduler.
+  const afterPenalty = consumeScheduledRemoval(schedule, 0);
+  assert.equal(afterPenalty.items.find((item) => item.id === trigger.id)?.status, 'completed');
+  const afterSkip = updateDynamicClothingScheduler(afterPenalty, trigger.id, 0, 'skipped', 40, 5);
+  assert.equal(afterSkip.items.find((item) => item.id === trigger.id)?.status, 'completed');
+  assert.equal(afterSkip.items.filter((item) => item.status !== 'completed').length, schedule.items.length - 1);
+});
+
+test('choosing Truth is closed when a removal is due or Tim Hồng is full', () => {
+  const both = ['truth', 'dare'] as const;
+  const reason = (overrides: Partial<Parameters<typeof getTruthLockReason>[0]> = {}) => getTruthLockReason({
+    availableTypes: both, forceClothingDare: false, intimacyPercent: 40, ...overrides,
+  });
+  assert.equal(reason(), null);
+  assert.match(reason({ forceClothingDare: true }) ?? '', /đến hẹn cởi đồ/);
+  assert.match(reason({ intimacyPercent: 100 }) ?? '', /Tim Hồng đã đầy/);
+  assert.match(reason({ availableTypes: ['dare'] }) ?? '', /Không còn lá/);
+  // With no Dare left the couple must not get stuck.
+  assert.equal(reason({ availableTypes: ['truth'], forceClothingDare: true, intimacyPercent: 100 }), null);
 });

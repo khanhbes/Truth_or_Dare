@@ -1623,6 +1623,31 @@ const ICON_MAP: Record<string, React.FC<IconProps>> = {
   position_have_sex_art: HaveSexMythicImageIcon,
 };
 
+/** Pictures behind the illustrated icons. */
+const ICON_IMAGES: Record<string, string> = {
+  couple_embrace_art: coupleEmbraceImage,
+  couple_reclining_art: coupleRecliningImage,
+  couple_carry_art: coupleStandingCarryImage,
+  couple_seated_art: coupleSeatedGazeImage,
+  couple_lifted_kiss_art: coupleLiftedKissImage,
+  couple_back_hug_kiss_art: coupleBackHugKissImage,
+  couple_forehead_cuddle_art: coupleForeheadCuddleImage,
+  couple_slow_dance_kiss_art: coupleSlowDanceKissImage,
+  couple_sofa_cuddle_art: coupleSofaCuddleImage,
+  couple_playful_spin_art: couplePlayfulSpinImage,
+  couple_umbrella_kiss_art: coupleUmbrellaKissImage,
+  position_have_sex_art: haveSexMythicImage,
+};
+
+/** Loads and decodes a card's picture ahead of time, so turning it over never waits for it. */
+export function preloadCardArt(card: { customImage?: string; icon?: string; content: string }): void {
+  const source = card.customImage || ICON_IMAGES[card.icon || autoAssignIcon(card.content)];
+  if (!source) return;
+  const image = new Image();
+  image.src = source;
+  void image.decode?.().catch(() => undefined);
+}
+
 export const CARD_ICON_NAMES = Object.keys(ICON_MAP);
 
 export function getCardIcon(iconName?: string): React.FC<IconProps> | null {

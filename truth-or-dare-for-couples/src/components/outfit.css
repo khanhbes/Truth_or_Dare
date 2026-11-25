@@ -23,6 +23,18 @@
   animation: outfit-halo 2.8s ease-in-out infinite;
 }
 
+/* Swaying and breathing move the finished picture on the GPU; nothing inside it is
+   drawn again. Two elements, because one can only run one transform animation. */
+.outfit-figure__sway {
+  width: 100%;
+  transform-origin: 50% 95%;
+  animation: outfit-sway 7.2s ease-in-out infinite;
+}
+
+.outfit-figure--active .outfit-figure__sway {
+  animation-duration: 5.8s;
+}
+
 .outfit-figure__svg {
   display: block;
   width: 100%;
@@ -30,6 +42,8 @@
   max-height: 28rem;
   overflow: visible;
   filter: drop-shadow(0 .8rem 1.2rem rgba(0, 0, 0, .24));
+  transform-origin: 50% 95%;
+  animation: outfit-breathe 4.6s ease-in-out infinite;
 }
 
 .outfit-figure--compact {
@@ -45,23 +59,12 @@
 .outfit-figure__character {
   transform-box: fill-box;
   transform-origin: 50% 96%;
-  animation: outfit-character-sway 7.2s ease-in-out infinite;
 }
 
-.outfit-figure--active .outfit-figure__character {
-  animation-duration: 5.8s;
-}
-
-.outfit-figure__breath {
-  transform-box: fill-box;
-  transform-origin: 50% 86%;
-  animation: outfit-character-breathe 4.6s ease-in-out infinite;
-}
-
+/* Blinks and the breeze in the hair: useFigureLife in OutfitFigure. */
 .outfit-figure__eyes {
   transform-box: fill-box;
   transform-origin: center;
-  animation: outfit-character-blink 6.4s linear infinite;
 }
 
 .outfit-figure__body path,
@@ -75,6 +78,10 @@
   transition: opacity .35s ease, filter .2s ease;
 }
 
+.outfit-figure__garment.is-settled {
+  animation: none;
+}
+
 .outfit-figure__garment.is-interactive {
   cursor: pointer;
 }
@@ -86,22 +93,28 @@
   outline: none;
 }
 
-.outfit-figure__selection-outline,
-.outfit-figure__hit-area {
+/* Both groups reuse the garment silhouette; CSS overrides its own fills. */
+.outfit-figure__selection-outline > *,
+.outfit-figure__hit-area > * {
   fill: transparent;
   stroke: transparent;
+  opacity: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .outfit-figure__selection-outline {
   pointer-events: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.75;
-  transition: stroke .2s ease, filter .2s ease;
+  transition: filter .2s ease;
 }
 
-.outfit-figure__hit-area {
+.outfit-figure__selection-outline > * {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3.5;
+  transition: stroke .2s ease;
+}
+
+.outfit-figure__hit-area > * {
   pointer-events: all;
   stroke-width: 12;
 }
@@ -109,8 +122,13 @@
 .outfit-figure__garment.is-interactive:hover .outfit-figure__selection-outline,
 .outfit-figure__garment.is-interactive:focus-visible .outfit-figure__selection-outline,
 .outfit-figure__garment.is-interactive.is-selected .outfit-figure__selection-outline {
-  stroke: rgba(255, 255, 255, .78);
   filter: drop-shadow(0 0 .18rem rgba(251, 113, 133, .78));
+}
+
+.outfit-figure__garment.is-interactive:hover .outfit-figure__selection-outline > *,
+.outfit-figure__garment.is-interactive:focus-visible .outfit-figure__selection-outline > *,
+.outfit-figure__garment.is-interactive.is-selected .outfit-figure__selection-outline > * {
+  stroke: rgba(255, 255, 255, .85);
 }
 
 .outfit-figure__garment.is-preview-removed {
@@ -139,262 +157,397 @@
 
 .outfit-configurator {
   position: relative;
-  overflow: hidden;
-  border: 1px solid rgba(251, 113, 133, .22);
-  border-radius: 1.25rem;
-  background: linear-gradient(145deg, rgba(54, 20, 34, .8), rgba(18, 15, 18, .94));
-  box-shadow: 0 1.2rem 3rem rgba(0, 0, 0, .2);
+  container-type: inline-size;
+  border: 1px solid rgba(251, 113, 133, .2);
+  border-radius: 1.1rem;
+  background: linear-gradient(150deg, rgba(54, 20, 34, .72), rgba(18, 15, 18, .9));
   color: #fff;
-}
-
-.outfit-configurator::before {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .42), transparent);
-  content: '';
-}
-
-.outfit-configurator__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1rem .2rem;
-}
-
-.outfit-configurator__eyebrow {
-  margin: 0 0 .15rem;
-  color: #fda4af;
-  font-size: .67rem;
-  font-weight: 800;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.outfit-configurator__header h4 {
-  margin: 0;
-  color: #fff7ed;
-  font-size: .98rem;
-}
-
-.outfit-configurator__count {
-  display: inline-flex;
-  min-width: 4.2rem;
-  min-height: 2.2rem;
-  align-items: center;
-  justify-content: center;
-  gap: .38rem;
-  border: 1px solid rgba(253, 164, 175, .25);
-  border-radius: 999px;
-  background: rgba(136, 19, 55, .22);
-  color: #fecdd3;
-  font-size: .75rem;
-  font-weight: 800;
-}
-
-.outfit-configurator__count svg {
-  width: .9rem;
-  height: .9rem;
 }
 
 .outfit-configurator__workspace {
   display: grid;
-  grid-template-columns: minmax(8.5rem, .78fr) minmax(0, 1.22fr);
-  align-items: center;
-  gap: .75rem;
-  padding: .6rem 1rem 1rem;
+  grid-template-columns: 10.5rem minmax(0, 1fr);
+  grid-template-areas:
+    "stage slots"
+    "stage editor";
+  grid-template-rows: auto 1fr;
+  align-items: start;
+  column-gap: 1.1rem;
+  row-gap: .9rem;
+  padding: 1rem;
 }
 
-.outfit-configurator__controls {
-  min-width: 0;
-}
-
-.outfit-configurator__slots {
+.outfit-configurator__stage {
+  grid-area: stage;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .45rem;
+  justify-items: center;
+  gap: .5rem;
+  align-self: stretch;
+  border-radius: .9rem;
+  background: radial-gradient(ellipse 50% 46% at 50% 44%, rgba(251, 113, 133, .13), transparent);
+  padding: .4rem .2rem .6rem;
 }
 
-.outfit-slot-button {
-  display: flex;
-  min-height: 3rem;
+.outfit-configurator__stage .outfit-figure {
+  width: 100%;
+  max-width: 10rem;
+}
+
+.outfit-configurator__count {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: .4rem;
-  border: 1px solid rgba(255, 255, 255, .09);
-  border-radius: .75rem;
-  background: rgba(255, 255, 255, .035);
-  padding: .55rem .62rem;
-  color: #a3a3a3;
-  font: inherit;
-  font-size: .73rem;
+  gap: .35rem;
+  border: 1px solid rgba(253, 164, 175, .22);
+  border-radius: 999px;
+  background: rgba(136, 19, 55, .22);
+  padding: .25rem .65rem;
+  color: #fecdd3;
+  font-size: .8125rem;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.outfit-configurator__count svg {
+  width: .85rem;
+  height: .85rem;
+}
+
+/* Slot list: one row per garment, the whole row selects it. */
+.outfit-configurator__slots {
+  grid-area: slots;
+  display: grid;
+  gap: .4rem;
+}
+
+.outfit-slot {
+  display: flex;
+  min-height: 3.1rem;
+  align-items: stretch;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: .85rem;
+  background: rgba(255, 255, 255, .03);
+  transition: border-color .2s ease, background .2s ease;
+}
+
+.outfit-slot.is-included {
+  background: rgba(190, 24, 93, .1);
+}
+
+.outfit-slot.is-editing {
+  border-color: rgba(251, 113, 133, .7);
+  background: rgba(190, 24, 93, .18);
+}
+
+.outfit-slot__select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: .65rem;
+  border: 0;
+  border-radius: .8rem 0 0 .8rem;
+  background: transparent;
+  padding: .45rem .7rem;
+  color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color .2s ease, background .2s ease, color .2s ease, transform .2s ease;
 }
 
-.outfit-slot-button:hover,
-.outfit-slot-button:focus-visible {
-  border-color: rgba(253, 164, 175, .55);
-  color: #fff;
-  outline: none;
-  transform: translateY(-1px);
-}
-
-.outfit-slot-button.is-included {
-  color: #fff1f2;
-  background: rgba(190, 24, 93, .17);
-}
-
-.outfit-slot-button.is-editing {
-  border-color: rgba(251, 113, 133, .72);
-  box-shadow: 0 0 0 2px rgba(251, 113, 133, .1);
-}
-
-.outfit-slot-button__action {
-  display: grid;
-  width: 1.4rem;
-  height: 1.4rem;
+.outfit-slot__swatch {
+  width: 1.35rem;
+  height: 1.35rem;
   flex: 0 0 auto;
-  place-items: center;
+  border: 1.5px dashed rgba(255, 255, 255, .28);
   border-radius: 999px;
-  background: rgba(255, 255, 255, .09);
 }
 
-.outfit-slot-button__action svg {
-  width: .82rem;
-  height: .82rem;
+.outfit-slot.is-included .outfit-slot__swatch {
+  border: 2px solid rgba(255, 255, 255, .7);
+  background: var(--swatch-color);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
 }
 
+.outfit-slot__text {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: .5rem;
+}
+
+.outfit-slot__name {
+  color: #fff7ed;
+  font-size: .875rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.outfit-slot__style {
+  overflow: hidden;
+  color: #c9c9c9;
+  font-size: .8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outfit-slot.is-included .outfit-slot__style {
+  color: #fda4af;
+}
+
+.outfit-slot__toggle {
+  display: inline-flex;
+  min-width: 5.2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+  margin: .4rem;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .18);
+  padding: 0 .7rem;
+  color: #d4d4d4;
+  font: inherit;
+  font-size: .8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, color .2s ease;
+}
+
+.outfit-slot:not(.is-included) .outfit-slot__toggle {
+  border-color: rgba(253, 164, 175, .45);
+  background: rgba(190, 24, 93, .22);
+  color: #ffe4e6;
+}
+
+.outfit-slot__toggle svg {
+  width: .85rem;
+  height: .85rem;
+}
+
+.outfit-slot__select:hover .outfit-slot__name,
+.outfit-slot__toggle:hover {
+  color: #fff;
+}
+
+.outfit-slot__toggle:hover {
+  border-color: rgba(253, 164, 175, .7);
+}
+
+.outfit-slot__select:focus-visible,
+.outfit-slot__toggle:focus-visible,
+.outfit-configurator__styles button:focus-visible,
+.outfit-configurator__palette > button:focus-visible,
+.outfit-configurator__custom-color:focus-within,
+.outfit-configurator__add:focus-visible {
+  outline: 2px solid #fda4af;
+  outline-offset: 2px;
+}
+
+.outfit-slot__select:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Editor for the selected garment. */
 .outfit-configurator__editor {
-  margin-top: .8rem;
+  grid-area: editor;
+  min-width: 0;
   border-top: 1px solid rgba(255, 255, 255, .08);
-  padding-top: .75rem;
+  padding-top: .8rem;
 }
 
-.outfit-configurator__editor.is-disabled {
-  min-height: 3.1rem;
+.outfit-configurator__editing {
+  margin: 0 0 .65rem;
+  color: #c9c9c9;
+  font-size: .8125rem;
+}
+
+.outfit-configurator__editing strong {
+  color: #fff7ed;
+}
+
+.outfit-configurator__field {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr);
+  align-items: start;
+  gap: .5rem;
 }
 
 .outfit-configurator__field + .outfit-configurator__field {
-  margin-top: .8rem;
+  margin-top: .7rem;
 }
 
 .outfit-configurator__field-label {
-  display: block;
-  margin-bottom: .42rem;
-  color: #d4d4d4;
-  font-size: .68rem;
+  padding-top: .65rem;
+  color: #c9c9c9;
+  font-size: .8125rem;
   font-weight: 700;
 }
 
 .outfit-configurator__styles {
   display: flex;
   flex-wrap: wrap;
-  gap: .35rem;
+  gap: .4rem;
 }
 
 .outfit-configurator__styles button,
 .outfit-configurator__add {
   display: inline-flex;
-  min-height: 3rem;
+  min-height: 2.6rem;
   align-items: center;
-  gap: .28rem;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: .62rem;
-  background: rgba(255, 255, 255, .045);
-  padding: .42rem .58rem;
-  color: #bdbdbd;
+  gap: .3rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .04);
+  padding: 0 .95rem;
+  color: #d4d4d4;
   font: inherit;
-  font-size: .65rem;
+  font-size: .8125rem;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, color .2s ease;
 }
 
 .outfit-configurator__styles button:hover,
-.outfit-configurator__styles button:focus-visible,
-.outfit-configurator__styles button.is-selected,
-.outfit-configurator__add:hover,
-.outfit-configurator__add:focus-visible {
-  border-color: rgba(253, 164, 175, .62);
-  background: rgba(190, 24, 93, .18);
+.outfit-configurator__add:hover {
+  border-color: rgba(253, 164, 175, .5);
   color: #fff;
-  outline: none;
+}
+
+.outfit-configurator__styles button.is-selected,
+.outfit-configurator__add {
+  border-color: rgba(253, 164, 175, .7);
+  background: rgba(190, 24, 93, .24);
+  color: #fff;
 }
 
 .outfit-configurator__styles svg,
 .outfit-configurator__add svg {
-  width: .75rem;
-  height: .75rem;
+  width: .8rem;
+  height: .8rem;
 }
 
 .outfit-configurator__palette {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: .4rem;
+  gap: .3rem;
 }
 
-.outfit-configurator__palette > button {
+.outfit-configurator__palette > button,
+.outfit-configurator__custom-color {
+  position: relative;
   display: grid;
-  width: 3rem;
-  height: 3rem;
+  width: 2.5rem;
+  height: 2.5rem;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, .16);
+  border: 2px solid transparent;
   border-radius: 999px;
   background: transparent;
-  padding: .48rem;
+  padding: .3rem;
   cursor: pointer;
+  transition: border-color .2s ease, transform .2s ease;
 }
 
-.outfit-configurator__palette > button span {
+.outfit-configurator__palette > button span,
+.outfit-configurator__custom-color span {
   width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--swatch-color);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22);
 }
 
-.outfit-configurator__palette > button:hover,
-.outfit-configurator__palette > button:focus-visible,
-.outfit-configurator__palette > button.is-selected {
-  border-color: #fff;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(251, 113, 133, .45);
-  transform: scale(1.08);
-}
-
-.outfit-configurator__custom-color {
-  display: inline-flex;
-  min-height: 3rem;
-  align-items: center;
-  gap: .35rem;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 999px;
-  padding: .24rem .3rem .24rem .55rem;
-  color: #d4d4d4;
-  font-size: .62rem;
-  font-weight: 700;
-  cursor: pointer;
+.outfit-configurator__custom-color span {
+  background:
+    radial-gradient(circle, var(--swatch-color, transparent) 0 38%, transparent 40%),
+    conic-gradient(#ff6b9d, #f5c451, #4ade80, #38bdf8, #a78bfa, #ff6b9d);
 }
 
 .outfit-configurator__custom-color input {
-  width: 2rem;
-  height: 2rem;
-  overflow: hidden;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  padding: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
   cursor: pointer;
+}
+
+.outfit-configurator__palette > button:hover,
+.outfit-configurator__custom-color:hover {
+  transform: scale(1.06);
+}
+
+.outfit-configurator__palette > button.is-selected,
+.outfit-configurator__custom-color.is-selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(251, 113, 133, .45);
+}
+
+.outfit-configurator__empty p {
+  margin: 0 0 .6rem;
+  color: #c9c9c9;
+  font-size: .8125rem;
+  line-height: 1.5;
 }
 
 .outfit-configurator button:disabled,
 .outfit-configurator input:disabled {
   cursor: not-allowed;
   opacity: .45;
+}
+
+/* Narrow: figure beside the slot list, the editor takes the full width below. */
+@container (max-width: 34rem) {
+  .outfit-configurator__workspace {
+    grid-template-columns: 7.2rem minmax(0, 1fr);
+    grid-template-areas:
+      "stage slots"
+      "editor editor";
+    grid-template-rows: auto auto;
+    column-gap: .7rem;
+    padding: .75rem;
+  }
+
+  .outfit-configurator__stage .outfit-figure {
+    max-width: 7rem;
+  }
+
+  .outfit-slot {
+    min-height: 2.9rem;
+  }
+
+  .outfit-slot__select {
+    gap: .5rem;
+    padding: .35rem .55rem;
+  }
+
+  .outfit-slot__text {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .outfit-slot__toggle {
+    min-width: 0;
+    margin: .35rem;
+    padding: 0 .6rem;
+  }
+}
+
+@container (max-width: 21rem) {
+  .outfit-configurator__workspace {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "stage"
+      "slots"
+      "editor";
+  }
+
+  .outfit-configurator__stage .outfit-figure {
+    max-width: 6.5rem;
+  }
 }
 
 .garment-dialog {
@@ -420,7 +573,6 @@
   box-shadow: 0 2rem 6rem rgba(0, 0, 0, .55);
   color: #fff;
   animation: outfit-dialog-in .28s cubic-bezier(.2, .85, .25, 1) both;
-  scrollbar-color: rgba(251, 113, 133, .45) transparent;
 }
 
 .garment-dialog__panel:focus {
@@ -440,24 +592,23 @@
   display: inline-block;
   margin-bottom: .3rem;
   color: #fda4af;
-  font-size: .67rem;
-  font-weight: 800;
-  letter-spacing: .13em;
-  text-transform: uppercase;
+  font-size: .8125rem;
+  font-weight: 700;
 }
 
 .garment-dialog__header h2 {
   margin: 0;
   color: #fff7ed;
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: 'Playfair Display', Georgia, serif;
   font-size: clamp(1.25rem, 4vw, 1.7rem);
+  font-weight: 700;
 }
 
 .garment-dialog__header p {
-  max-width: 34rem;
+  max-width: 36rem;
   margin: .45rem 0 0;
-  color: #a3a3a3;
-  font-size: .78rem;
+  color: #d4d4d4;
+  font-size: .875rem;
   line-height: 1.55;
 }
 
@@ -497,11 +648,16 @@
   min-width: 0;
 }
 
+/* The whole figure stays visible above the buttons, also on a low laptop. */
+.garment-dialog__figure .outfit-figure__svg {
+  max-height: clamp(13rem, calc(100svh - 20rem), 28rem);
+}
+
 .garment-dialog__preview-note {
   min-height: 1.2rem;
   margin: -.2rem 0 0;
   color: #fda4af;
-  font-size: .72rem;
+  font-size: .8125rem;
   font-weight: 700;
   text-align: center;
 }
@@ -543,7 +699,7 @@
 
 .garment-choice:disabled {
   cursor: not-allowed;
-  opacity: .45;
+  opacity: .66;
 }
 
 .garment-choice span:first-child {
@@ -552,12 +708,12 @@
 }
 
 .garment-choice strong {
-  font-size: .82rem;
+  font-size: .9375rem;
 }
 
 .garment-choice small {
-  color: #8e8e8e;
-  font-size: .67rem;
+  color: #d4d4d4;
+  font-size: .8125rem;
 }
 
 .garment-choice > svg,
@@ -590,7 +746,7 @@
 
 .garment-dialog__empty p {
   margin: 0;
-  font-size: .74rem;
+  font-size: .875rem;
   line-height: 1.5;
 }
 
@@ -609,55 +765,17 @@
 .garment-dialog__footer button {
   min-height: 3rem;
   border-radius: 999px;
-  padding: .65rem 1rem;
+  padding: .65rem 1.1rem;
   font: inherit;
-  font-size: .76rem;
-  font-weight: 800;
+  font-size: .875rem;
+  font-weight: 700;
   cursor: pointer;
 }
 
-.game-table-stage {
-  display: grid;
-  width: 100%;
-  grid-template-columns: clamp(9rem, 15vw, 12rem) minmax(20rem, 28rem) clamp(9rem, 15vw, 12rem);
-  align-items: center;
-  justify-content: center;
-  gap: clamp(1rem, 3vw, 2.5rem);
-}
-
-.game-table-stage__center {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.game-outfit-desktop {
-  display: block;
-  min-width: 0;
-}
-
-.game-outfit-mobile {
-  display: none;
-}
-
-.game-player-outfit {
-  width: 100%;
-}
-
-.game-outfit-side {
-  width: min(100%, 9.5rem);
-}
-
-.game-outfit-dock {
-  width: 5.4rem;
-}
-
 .garment-dialog__secondary {
-  border: 1px solid rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .2);
   background: transparent;
-  color: #d4d4d4;
+  color: #e5e5e5;
 }
 
 .garment-dialog__confirm {
@@ -680,8 +798,31 @@
   filter: grayscale(.5);
 }
 
+@media (max-height: 760px) and (min-width: 640px) {
+  .garment-dialog__header {
+    padding: .9rem 1.25rem .7rem;
+  }
+
+  .garment-dialog__header p {
+    margin-top: .2rem;
+  }
+
+  .garment-dialog__content {
+    padding: .6rem 1.25rem .75rem;
+  }
+
+  .garment-choice {
+    min-height: 3rem;
+    padding: .5rem .8rem;
+  }
+
+  .garment-dialog__footer {
+    padding-block: .7rem;
+  }
+}
+
 .garment-swap__panel {
-  width: min(900px, calc(100vw - 2rem));
+  width: min(56.25rem, calc(100vw - 2rem));
 }
 
 .garment-swap__steps {
@@ -692,20 +833,24 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  padding: 0 1.25rem 1rem;
+  padding: .75rem 1.25rem 1rem;
 }
 
 .garment-swap__person {
   display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(150px, 1fr);
+  grid-template-columns: minmax(8rem, 0.8fr) minmax(9.5rem, 1fr);
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
 }
 
 .garment-swap__figure .outfit-figure {
-  width: min(100%, 180px);
+  width: min(100%, 11.25rem);
   margin-inline: auto;
+}
+
+.garment-swap__figure .outfit-figure__svg {
+  max-height: clamp(11rem, calc(100svh - 23.25rem), 22rem);
 }
 
 .garment-swap__choices {
@@ -723,7 +868,7 @@
   border-radius: 0.85rem;
   background: linear-gradient(135deg, rgba(226, 194, 117, 0.09), rgba(229, 164, 140, 0.06));
   color: #e8e2d8;
-  font-size: 0.78rem;
+  font-size: 0.875rem;
 }
 
 .garment-swap__summary > svg {
@@ -739,6 +884,13 @@
 .garment-swap__summary p {
   margin-top: 0.25rem;
   color: #d9b9ae;
+}
+
+@media (max-height: 760px) and (min-width: 640px) {
+  .garment-swap__summary {
+    margin-bottom: .6rem;
+    padding-block: .55rem;
+  }
 }
 
 /* ── Character life: blush, smile, hair, hearts, garment exits ── */
@@ -769,18 +921,11 @@
 .outfit-figure__hair-back {
   transform-box: fill-box;
   transform-origin: 50% 8%;
-  animation: outfit-hair-sway 5.6s ease-in-out infinite;
-}
-
-.outfit-figure__hair-back {
-  animation-duration: 6.4s;
-  animation-delay: -1.4s;
 }
 
 .outfit-figure__hair-clip {
   transform-box: fill-box;
   transform-origin: center;
-  animation: outfit-clip-glint 4.8s ease-in-out infinite;
 }
 
 .outfit-figure__hearts {
@@ -812,7 +957,8 @@
 .outfit-figure__twinkle {
   transform-box: fill-box;
   transform-origin: center;
-  animation: outfit-twinkle 2.8s ease-in-out infinite;
+  opacity: .4;
+  transform: scale(.8);
 }
 
 .outfit-figure__veil {
@@ -849,25 +995,10 @@
   filter: drop-shadow(0 .8rem 1.2rem rgba(0, 0, 0, .24)) drop-shadow(0 0 .9rem rgba(251, 113, 133, .22));
 }
 
-@keyframes outfit-hair-sway {
-  0%, 100% { transform: rotate(-.9deg); }
-  50% { transform: rotate(.9deg); }
-}
-
-@keyframes outfit-clip-glint {
-  0%, 82%, 100% { transform: scale(1); filter: brightness(1); }
-  88% { transform: scale(1.18); filter: brightness(1.45); }
-}
-
 @keyframes outfit-heart-rise {
   0% { opacity: 0; transform: translateY(0) scale(.6); }
   18% { opacity: .9; }
   100% { opacity: 0; transform: translateY(-2.6rem) scale(1.1) rotate(10deg); }
-}
-
-@keyframes outfit-twinkle {
-  0%, 100% { opacity: .15; transform: scale(.55) rotate(0deg); }
-  50% { opacity: .95; transform: scale(1.1) rotate(45deg); }
 }
 
 @keyframes outfit-veil-in {
@@ -905,19 +1036,14 @@
   50% { opacity: .86; transform: translateY(-4%) scale(1.08); }
 }
 
-@keyframes outfit-character-sway {
-  0%, 100% { transform: rotate(-.45deg) translateX(-.35px); }
-  50% { transform: rotate(.45deg) translateX(.35px); }
+@keyframes outfit-sway {
+  0%, 100% { transform: rotate(-.5deg); }
+  50% { transform: rotate(.5deg); }
 }
 
-@keyframes outfit-character-breathe {
-  0%, 100% { transform: translateY(0) scaleX(1); }
-  50% { transform: translateY(-.7px) scaleX(1.004); }
-}
-
-@keyframes outfit-character-blink {
-  0%, 46%, 48%, 84%, 86%, 100% { transform: scaleY(1); }
-  47%, 85% { transform: scaleY(.08); }
+@keyframes outfit-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.004, 1.006); }
 }
 
 @keyframes outfit-garment-in {
@@ -936,24 +1062,6 @@
 }
 
 @media (max-width: 640px) {
-  .outfit-configurator__workspace {
-    grid-template-columns: minmax(6.5rem, .68fr) minmax(0, 1.32fr);
-    gap: .45rem;
-    padding-inline: .75rem;
-  }
-
-  .outfit-configurator__header {
-    padding-inline: .8rem;
-  }
-
-  .outfit-configurator__slots {
-    grid-template-columns: 1fr;
-  }
-
-  .outfit-slot-button {
-    min-height: 3rem;
-  }
-
   .garment-dialog {
     align-items: end;
     padding: 0;
@@ -992,6 +1100,7 @@
 
   .garment-swap__grid {
     grid-template-columns: 1fr;
+    padding-top: 0;
     padding-inline: 0.85rem;
   }
 
@@ -999,7 +1108,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
-    padding: 0 0.85rem 0.8rem;
+    padding: 0.8rem 0.85rem;
   }
 
   .garment-swap__steps button {
@@ -1012,7 +1121,7 @@
     border-radius: 999px;
     background: rgba(0, 0, 0, 0.22);
     color: #cfc7cb;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-weight: 700;
   }
 
@@ -1023,7 +1132,7 @@
     place-items: center;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.08);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
   }
 
   .garment-swap__steps button > svg {
@@ -1055,54 +1164,7 @@
   }
 }
 
-@media (max-width: 767px) {
-  .game-table-stage {
-    display: block;
-  }
-
-  .game-outfit-desktop {
-    display: none;
-  }
-
-  .game-outfit-mobile {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .65rem;
-    margin-top: .75rem;
-  }
-
-  .game-player-outfit--mobile {
-    display: grid;
-    min-height: 7.8rem;
-    grid-template-columns: 5.5rem minmax(0, 1fr);
-    align-items: center;
-    padding: .35rem .55rem;
-    text-align: left;
-  }
-
-  .game-player-outfit--mobile .outfit-figure__name {
-    display: none;
-  }
-
-  .game-player-outfit--mobile > div:last-child {
-    min-width: 0;
-    margin-top: 0;
-  }
-}
-
 @media (max-width: 390px) {
-  .outfit-configurator__workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .outfit-configurator__workspace .outfit-figure {
-    width: 7.4rem;
-  }
-
-  .outfit-configurator__slots {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .garment-dialog__content {
     grid-template-columns: 6.8rem minmax(0, 1fr);
   }
@@ -1111,32 +1173,13 @@
     min-height: 3.25rem;
     padding: .5rem .62rem;
   }
-
-  .game-outfit-mobile {
-    gap: .4rem;
-  }
-
-  .game-player-outfit--mobile {
-    min-height: 7rem;
-    grid-template-columns: 4.4rem minmax(0, 1fr);
-    padding-inline: .4rem;
-  }
-
-  .game-outfit-dock {
-    width: 4.3rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .outfit-figure--active .outfit-figure__halo,
-  .outfit-figure__character,
-  .outfit-figure__breath,
-  .outfit-figure__eyes,
+  .outfit-figure__sway,
+  .outfit-figure__svg,
   .outfit-figure__garment,
-  .outfit-figure__hair-front,
-  .outfit-figure__hair-back,
-  .outfit-figure__hair-clip,
-  .outfit-figure__twinkle,
   .outfit-figure__veil,
   .outfit-figure__character.is-reacting,
   .garment-dialog,
@@ -1150,7 +1193,7 @@
   }
 
   .outfit-figure__garment,
-  .outfit-slot-button,
+  .outfit-slot,
   .garment-choice,
   .garment-dialog__footer button {
     transition-duration: .08s;
@@ -1160,7 +1203,8 @@
   .outfit-figure__garment.is-interactive:focus-visible,
   .outfit-figure__garment.is-selected,
   .outfit-figure__garment.is-preview-removed,
-  .outfit-slot-button:hover,
+  .outfit-configurator__palette > button:hover,
+  .outfit-configurator__custom-color:hover,
   .garment-choice:hover:not(:disabled),
   .garment-dialog__footer button:hover:not(:disabled) {
     transform: none;

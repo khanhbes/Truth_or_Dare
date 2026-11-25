@@ -1,8 +1,11 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Trophy, Heart, RotateCcw, X, CheckCircle2, Layers3, Star, Shuffle, TrendingUp } from 'lucide-react';
+import { Heart, RotateCcw, X, CheckCircle2, Shirt, Star } from 'lucide-react';
 import { CardResolutionEvent, ClothingRemovalEvent, GameEndReason, IntimacyEvent, JourneyPhase, OutfitState, Player, PlayerRewardState, PositionSessionStats, RewardEvent } from '../types';
 import { getPresentGarmentSlots } from '../utils/wardrobe';
+import { ConfirmDialog } from './ConfirmDialog';
+import { dialogPanelMotion } from '../utils/motionTokens';
+import { useDialogFocus } from './useDialogFocus';
 
 interface SummaryModalProps {
   player1: Player;
@@ -26,6 +29,13 @@ interface SummaryModalProps {
   endReason?: GameEndReason | null;
 }
 
+const ENDING_COPY: Record<GameEndReason, string> = {
+  have_sex: 'Hai bạn đã đi trọn hành trình. Lá cuối chỉ là gợi ý: làm hay không là tùy hai bạn.',
+  pink_complete: 'Tim Hồng đã đầy. Dừng ở đây cũng là một cái kết đẹp.',
+  no_cards: 'Hai bạn đã đi hết những lá hợp với ván này. Ôm nhau một cái nhé.',
+  manual: 'Cảm ơn hai bạn đã dành thời gian cho nhau.',
+};
+
 const getInitialGarmentCount = (outfitState: OutfitState) =>
   Object.values(outfitState.initial.garments).filter(Boolean).length;
 
@@ -36,15 +46,6 @@ const getRemovalCount = (
 ) => events?.filter(
   (event) => event.targetPlayerIndex === targetPlayerIndex && event.source === source && event.action !== 'transferred'
 ).length ?? 0;
-
-const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  '[href]',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 export const SummaryModal: React.FC<SummaryModalProps> = ({
   player1,
@@ -67,119 +68,51 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   terminal = false,
   endReason,
 }) => {
-  const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  // After a finished game there is nothing to go back to, so Escape does nothing,
+  // and focus starts on the title: one more Space must not start a new game.
+  const panelRef = useDialogFocus<HTMLDivElement>({
+    onEscape: terminal ? undefined : onClose,
+    initialFocusRef: terminal ? titleRef : closeButtonRef,
+  });
   const shouldReduceMotion = useReducedMotion();
   const totalCompleted = player1.completedCount + player2.completedCount;
   const legacyIntimacyScore = Math.min(100, Math.round((totalCompleted / Math.max(1, totalRounds)) * 100));
   const intimacyScore = intimacyPercent ?? legacyIntimacyScore;
-  const cardGain = intimacyEvents
-    ?.filter((event) => event.source === 'completed_card' && event.track !== 'luxury')
-    .reduce((total, event) => total + event.amount, 0) ?? 0;
-  const clothingGain = intimacyEvents
-    ?.filter((event) => event.source === 'card_clothing_removal')
-    .reduce((total, event) => total + event.amount, 0) ?? 0;
-  const luxuryGain = intimacyEvents
-    ?.filter((event) => event.source === 'completed_card' && event.track === 'luxury')
-    .reduce((total, event) => total + event.amount, 0) ?? 0;
   const swapCount = Math.floor((removalEvents?.filter((event) => event.action === 'transferred').length ?? 0) / 2);
-  const replacedCount = removalEvents?.filter((event) => event.action === 'replaced').length ?? 0;
-  const rewardEventCount = rewardEvents?.length ?? 0;
 
-  let intimacyBadge = 'Gắn Kết Nhẹ Nhàng 🌸';
-  if (intimacyScore > 75) intimacyBadge = 'Cặp Đôi Bùng Nổ Nồng Nhiệt 💋';
-  else if (intimacyScore > 40) intimacyBadge = 'Tình Yêu Thân Mật Đắm Say 🔥';
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const focusFrame = window.requestAnimationFrame(() => {
-      if (terminal) panelRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus();
-      else closeButtonRef.current?.focus();
-    });
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !terminal) {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (event.key !== 'Tab' || !panelRef.current) return;
-      const focusable = Array.from(
-        panelRef.current.querySelectorAll(FOCUSABLE_SELECTOR),
-      ).filter(
-        (element): element is HTMLElement =>
-          element instanceof HTMLElement && !element.hasAttribute('disabled'),
-      );
-
-      if (focusable.length === 0) {
-        event.preventDefault();
-        panelRef.current.focus();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      window.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    };
-  }, [onClose, terminal]);
+  let intimacyBadge = 'Gắn kết nhẹ nhàng 🌸';
+  if (journeyPhase === 'final') intimacyBadge = 'Hành trình trọn vẹn 💞';
+  else if (journeyPhase === 'position') intimacyBadge = 'Đã mở Bộ Tư thế ✨';
+  else if (intimacyScore > 75) intimacyBadge = 'Nồng nhiệt 💋';
+  else if (intimacyScore > 40) intimacyBadge = 'Thân mật đắm say 🔥';
+  const totalRemoved = ([0, 1] as const).reduce((sum, index) => {
+    const state = outfitStates?.[index];
+    return state ? sum + Math.max(0, getInitialGarmentCount(state) - getPresentGarmentSlots(state).length) : sum;
+  }, 0);
 
   const renderOutfitSummary = (playerIndex: 0 | 1) => {
     const outfitState = outfitStates?.[playerIndex];
     if (!outfitState) return null;
-
     const initialCount = getInitialGarmentCount(outfitState);
     const remainingCount = getPresentGarmentSlots(outfitState).length;
     const removedCount = Math.max(0, initialCount - remainingCount);
-    const cardRemovalCount = getRemovalCount(removalEvents, playerIndex, 'card');
     const penaltyRemovalCount = getRemovalCount(removalEvents, playerIndex, 'penalty');
-    const preparationRemovalCount = getRemovalCount(removalEvents, playerIndex, 'preparation');
-
     return (
-      <div className="mt-3 border-t border-white/10 pt-3">
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-200/80">
-          <Layers3 className="h-3.5 w-3.5" aria-hidden="true" />
-          Trang phục
+      <div className="mt-3 border-t border-white/10 pt-3 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:pt-2">
+        <div className="flex items-center gap-1.5 text-sm text-neutral-200">
+          <Shirt className="h-4 w-4 shrink-0 text-rose-300" aria-hidden="true" />
+          <span className="text-balance">Đã cởi <strong className="tabular-nums text-rose-100">{removedCount}/{initialCount}</strong> món</span>
         </div>
-        <dl className="grid grid-cols-3 gap-1 text-center">
-          <div className="rounded-lg bg-white/[0.04] px-1 py-1.5">
-            <dt className="text-[9px] text-neutral-500">Ban đầu</dt>
-            <dd className="mt-0.5 text-sm font-bold text-white">{initialCount}</dd>
-          </div>
-          <div className="rounded-lg bg-rose-500/[0.07] px-1 py-1.5">
-            <dt className="text-[9px] text-neutral-500">Đã bỏ</dt>
-            <dd className="mt-0.5 text-sm font-bold text-rose-300">{removedCount}</dd>
-          </div>
-          <div className="rounded-lg bg-emerald-500/[0.06] px-1 py-1.5">
-            <dt className="text-[9px] text-neutral-500">Còn lại</dt>
-            <dd className="mt-0.5 text-sm font-bold text-emerald-300">{remainingCount}</dd>
-          </div>
-        </dl>
-        {removalEvents && (
-          <p className="mt-2 text-[10px] text-neutral-400">
-            Theo thẻ: <span className="font-semibold text-neutral-200">{cardRemovalCount}</span>
-            <span aria-hidden="true"> · </span>
-            Do luật phạt: <span className="font-semibold text-neutral-200">{penaltyRemovalCount}</span>
-            <span aria-hidden="true"> · </span>
-            Chuẩn bị: <span className="font-semibold text-neutral-200">{preparationRemovalCount}</span>
-          </p>
+        <div className="mt-1.5 flex gap-1" aria-hidden="true">
+          {Array.from({ length: initialCount }, (_, index) => (
+            <span key={index} className={`h-1.5 flex-1 rounded-full ${index < removedCount ? 'bg-rose-400' : 'bg-white/10'}`} />
+          ))}
+        </div>
+        {penaltyRemovalCount > 0 && (
+          <p className="mt-1.5 text-xs text-neutral-300">{penaltyRemovalCount} món do bỏ lượt</p>
         )}
       </div>
     );
@@ -188,27 +121,17 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   const renderRewardSummary = (playerIndex: 0 | 1) => {
     const reward = playerRewards?.[playerIndex];
     if (!reward) return null;
+    const extras = [
+      reward.rerollsUsed > 0 ? `đổi bài ${reward.rerollsUsed} lần` : null,
+      reward.difficultyBoostsUsed > 0 ? `tăng khó ${reward.difficultyBoostsUsed} lần` : null,
+    ].filter(Boolean);
     return (
-      <div className="mt-3 border-t border-white/10 pt-3">
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-200/80">
-          <Star className="h-3.5 w-3.5 fill-amber-300/20" aria-hidden="true" />
-          Phần thưởng
+      <div className="mt-3 border-t border-white/10 pt-3 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:pt-2">
+        <div className="flex items-center gap-1.5 text-sm text-neutral-200">
+          <Star className="h-4 w-4 shrink-0 fill-amber-300/20 text-amber-300" aria-hidden="true" />
+          <span>Kiếm <strong className="text-amber-200">{reward.totalStarsEarned}★</strong> · <span className="whitespace-nowrap">còn <strong className="text-amber-200">{reward.starBalance}★</strong></span></span>
         </div>
-        <dl className="grid grid-cols-3 gap-1 text-center">
-          <div className="rounded-lg bg-amber-500/[0.07] px-1 py-1.5">
-            <dt className="text-[9px] text-neutral-500">Đã kiếm</dt>
-            <dd className="mt-0.5 text-sm font-bold text-amber-200">{reward.totalStarsEarned}★</dd>
-          </div>
-          <div className="rounded-lg bg-white/[0.04] px-1 py-1.5">
-            <dt className="flex items-center justify-center gap-1 text-[9px] text-neutral-500"><Shuffle className="h-2.5 w-2.5" />Đổi</dt>
-            <dd className="mt-0.5 text-sm font-bold text-white">{reward.rerollsUsed}</dd>
-          </div>
-          <div className="rounded-lg bg-orange-500/[0.06] px-1 py-1.5">
-            <dt className="flex items-center justify-center gap-1 text-[9px] text-neutral-500"><TrendingUp className="h-2.5 w-2.5" />Tăng</dt>
-            <dd className="mt-0.5 text-sm font-bold text-orange-200">{reward.difficultyBoostsUsed}</dd>
-          </div>
-        </dl>
-        <p className="mt-2 text-[10px] text-neutral-400">Còn lại: <strong className="text-amber-200">{reward.starBalance}★</strong></p>
+        {extras.length > 0 && <p className="mt-1 text-xs text-neutral-300">Đã {extras.join(', ')}</p>}
       </div>
     );
   };
@@ -231,11 +154,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
       <motion.div
         ref={panelRef}
         tabIndex={-1}
-        initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 8 }}
-        transition={{ duration: shouldReduceMotion ? 0.08 : 0.24, ease: 'easeOut' }}
-        className="relative w-full max-w-lg max-h-[calc(100svh-2rem)] overflow-y-auto overscroll-contain glass-wine rounded-3xl p-6 sm:p-8 border border-amber-400/60 shadow-2xl text-center text-white"
+        {...dialogPanelMotion(Boolean(shouldReduceMotion))}
+        className="relative max-h-[calc(100svh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border border-amber-300/45 bg-[#1c0c13] p-5 text-center text-white shadow-2xl sm:p-7 [@media(max-height:760px)]:py-4"
       >
         {!terminal && (
           <button
@@ -243,144 +163,133 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Đóng thống kê"
-            className="absolute top-4 right-4 flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+            className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full text-neutral-300 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
           >
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
 
-        <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-rose-500/30 to-amber-500/30 border border-amber-400/60 mx-auto flex items-center justify-center mb-4">
-          <Trophy className="w-8 h-8 text-amber-300 drop-shadow-[0_0_10px_rgba(212,175,55,0.8)]" />
+        <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full border border-amber-300/50 bg-gradient-to-tr from-rose-500/30 to-amber-500/30 [@media(max-height:760px)]:hidden">
+          <Heart className="h-7 w-7 fill-rose-300/60 text-rose-200" aria-hidden="true" />
         </div>
 
-        <h3 id="summary-title" className="font-serif-romantic text-3xl font-bold text-gold-gradient mb-1">
-          Tổng Kết Cuộc Chơi
+        <h3 ref={titleRef} tabIndex={-1} id="summary-title" className="px-8 font-serif-romantic text-2xl font-bold text-gold-gradient focus:outline-none sm:text-3xl">
+          {terminal ? 'Tổng kết cuộc chơi' : 'Thống kê ván này'}
         </h3>
-        <p id="summary-description" className="text-xs text-rose-200/90 italic mb-6">
-          {terminal
-            ? endReason === 'have_sex'
-              ? 'Lá hiếm đã được mở. Không có yêu cầu phải thực hiện.'
-              : 'Ván chơi đã kết thúc và không thể tiếp tục từ màn hình này.'
-            : '“Mỗi khoảnh khắc chia sẻ là một nhịp đập yêu thương”'}
+        <p id="summary-description" className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-rose-100">
+          {terminal ? ENDING_COPY[endReason ?? 'manual'] : 'Chặng đường hai bạn đã đi cùng nhau.'}
         </p>
 
-        {/* Intimacy Score Badge */}
-        <div className="bg-neutral-900/80 rounded-2xl p-4 border border-rose-500/30 mb-6 space-y-2">
-          <div className="text-xs text-neutral-400 uppercase tracking-wider">
-            Chỉ số thấu hiểu & kết nối
-          </div>
+        <div className="mt-4 space-y-3 rounded-2xl border border-rose-400/30 bg-black/35 p-4 [@media(max-height:760px)]:mt-3 [@media(max-height:760px)]:space-y-2 [@media(max-height:760px)]:p-3">
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-rose-500/[0.06] p-2">
-              <div className="text-[9px] uppercase tracking-wider text-rose-200/65">Tim hồng</div>
-              <div className="text-2xl font-bold font-serif-romantic text-rose-200">{intimacyScore}%</div>
+            <div className="rounded-xl bg-rose-500/[0.1] p-2">
+              <div className="text-sm text-rose-100">Tim Hồng</div>
+              <div className="font-serif-romantic text-2xl font-bold tabular-nums text-rose-100">{intimacyScore}%</div>
             </div>
-            <div className="rounded-xl bg-violet-400/[0.07] p-2">
-              <div className="text-[9px] uppercase tracking-wider text-violet-200/65">Tim Luxury</div>
-              <div className="text-2xl font-bold font-serif-romantic text-violet-200">{luxuryIntimacyPercent}%</div>
+            <div className="rounded-xl bg-violet-400/[0.1] p-2">
+              <div className="text-sm text-violet-100">Tim Luxury</div>
+              <div className="font-serif-romantic text-2xl font-bold tabular-nums text-violet-100">{luxuryIntimacyPercent}%</div>
             </div>
           </div>
-          <div className="inline-block px-3 py-1 rounded-full bg-rose-950/80 border border-rose-500/40 text-xs text-rose-300 font-medium">
+          <div className="inline-block rounded-full border border-rose-400/45 bg-rose-950/80 px-3 py-1 text-sm font-medium text-rose-100">
             {intimacyBadge}
           </div>
-          {intimacyEvents && (
-            <div className="grid grid-cols-2 gap-1.5 pt-2 text-center sm:grid-cols-4">
-              <div className="rounded-lg bg-white/[0.04] px-1 py-1.5">
-                <div className="text-[9px] text-neutral-500">Hoàn thành</div>
-                <div className="text-xs font-bold text-white">+{cardGain}%</div>
+          <dl className="grid grid-cols-3 gap-1.5 text-center">
+            {([
+              ['Lá hoàn thành', totalCompleted, 'bg-white/[0.06]'],
+              ['Món đã cởi', totalRemoved, 'bg-rose-500/[0.1]'],
+              ['Tư thế đã làm', positionSessionStats.completed, 'bg-violet-500/[0.1]'],
+            ] as const).map(([label, value, tone]) => (
+              <div key={label} className={`rounded-lg px-1 py-2 ${tone}`}>
+                <dt className="text-xs text-neutral-200">{label}</dt>
+                <dd className="mt-0.5 text-lg font-bold tabular-nums text-white">{value}</dd>
               </div>
-              <div className="rounded-lg bg-rose-500/[0.07] px-1 py-1.5">
-                <div className="text-[9px] text-neutral-500">Theo thẻ</div>
-                <div className="text-xs font-bold text-rose-300">+{clothingGain}%</div>
-              </div>
-              <div className="rounded-lg bg-amber-500/[0.07] px-1 py-1.5">
-                <div className="text-[9px] text-neutral-500">Tư thế rút / mở</div>
-                <div className="text-xs font-bold text-amber-300">{positionSessionStats.drawn} / {positionSessionStats.opened}</div>
-              </div>
-              <div className="rounded-lg bg-violet-500/[0.07] px-1 py-1.5">
-                <div className="text-[9px] text-neutral-500">Luxury</div>
-                <div className="text-xs font-bold text-violet-200">+{luxuryGain}%</div>
-              </div>
-            </div>
-          )}
-          {removalEvents && (
-            <p className="pt-1 text-[10px] text-neutral-400">Đổi đồ: <strong className="text-neutral-200">{swapCount}</strong> · Món bị thay: <strong className="text-neutral-200">{replacedCount}</strong></p>
-          )}
-          {(positionSessionStats.drawn > 0 || cardResolutionEvents?.length) && (
-            <p className="pt-1 text-[10px] text-neutral-400">
-              Tư thế hoàn thành: <strong className="text-emerald-200">{positionSessionStats.completed}</strong>
-              {' · '}Bỏ qua: <strong className="text-neutral-200">{positionSessionStats.skipped}</strong>
-              {' · '}Resolution: <strong className="text-neutral-200">{cardResolutionEvents?.length ?? 0}</strong>
-            </p>
-          )}
-          {journeyPhase === 'final' && (
-            <p className="pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-200">
-              Đã mở lá hiếm kết thúc hành trình
-            </p>
+            ))}
+          </dl>
+          {swapCount > 0 && (
+            <p className="text-sm text-neutral-200">Hai bạn đã đổi đồ cho nhau {swapCount} lần.</p>
           )}
         </div>
 
-        {/* Player stats comparison */}
-        <div className="grid grid-cols-2 gap-4 mb-6 text-left">
-          <div className="bg-neutral-900/60 rounded-2xl p-3.5 border border-rose-500/20">
-            <div className="text-lg mb-1">{player1.avatar} {player1.name}</div>
-            <div className="text-xs text-neutral-300 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{player1.completedCount} thử thách hoàn thành</span>
-            </div>
-            {renderRewardSummary(0)}
-            {renderOutfitSummary(0)}
-          </div>
-
-          <div className="bg-neutral-900/60 rounded-2xl p-3.5 border border-amber-500/20">
-            <div className="text-lg mb-1">{player2.avatar} {player2.name}</div>
-            <div className="text-xs text-neutral-300 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{player2.completedCount} thử thách hoàn thành</span>
-            </div>
-            {renderRewardSummary(1)}
-            {renderOutfitSummary(1)}
-          </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-left">
+          {([0, 1] as const).map((index) => {
+            const player = index === 0 ? player1 : player2;
+            return (
+              <div key={index} className={`min-w-0 rounded-2xl border bg-black/30 p-3.5 ${index === 0 ? 'border-rose-400/30' : 'border-amber-400/30'}`}>
+                <div className="mb-1 truncate text-lg">{player.avatar} {player.name}</div>
+                <div className="flex items-center gap-1.5 text-sm text-neutral-200">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                  <span className="text-balance">{player.completedCount} lá hoàn thành</span>
+                </div>
+                {renderRewardSummary(index)}
+                {renderOutfitSummary(index)}
+              </div>
+            );
+          })}
         </div>
 
-        {playerRewards && (
-          <p className="mb-5 text-[10px] text-neutral-500">Đã ghi {rewardEventCount} sự kiện cộng hoặc sử dụng sao trong ván.</p>
+        {favoritesCount > 0 && (
+          <div className="mt-3 flex items-center justify-center gap-2 text-sm text-neutral-200">
+            <Heart className="h-4 w-4 fill-rose-500 text-rose-500" aria-hidden="true" />
+            <span>{favoritesCount} lá trong mục yêu thích</span>
+          </div>
         )}
 
-        {/* Favorites count */}
-        <div className="text-xs text-neutral-300 mb-6 flex items-center justify-center gap-2">
-          <Heart className="w-4 h-4 text-rose-500 fill-rose-500" />
-          <span>Đã lưu {favoritesCount} lá bài kỉ niệm vào danh sách yêu thích</span>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        {/* Actions: while a game is running, going back to it is the main choice. */}
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row-reverse [@media(max-height:760px)]:mt-3">
           {terminal ? (
-            <button
-              type="button"
-              onClick={onHome}
-              className="min-h-11 flex-1 py-3 rounded-full bg-neutral-900 border border-neutral-700 text-xs font-semibold hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-            >
-              Về trang đầu
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onRestart}
+                className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-gold-gradient py-3 text-sm font-bold text-neutral-950 shadow-md hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                <span>Ván mới</span>
+              </button>
+              <button
+                type="button"
+                onClick={onHome}
+                className="min-h-11 flex-1 rounded-full border border-white/20 bg-white/[0.05] py-3 text-sm font-semibold text-neutral-100 hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+              >
+                Về trang đầu
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={onClose}
-              className="min-h-11 flex-1 py-3 rounded-full bg-neutral-900 border border-neutral-700 text-xs font-semibold hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-            >
-              Chơi Tiếp Lượt Sau
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-11 flex-1 rounded-full bg-gold-gradient py-3 text-sm font-bold text-neutral-950 shadow-md hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+              >
+                Chơi tiếp
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmRestart(true)}
+                className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full border border-white/20 bg-white/[0.05] py-3 text-sm font-semibold text-neutral-100 hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                <span>Bỏ ván, chơi lại</span>
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={onRestart}
-            className="min-h-11 flex-1 py-3 rounded-full bg-gold-gradient text-neutral-950 text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>Tạo Ván Mới</span>
-          </button>
         </div>
       </motion.div>
+      {confirmRestart && (
+        <ConfirmDialog
+          icon={<RotateCcw className="h-5 w-5" />}
+          title="Bỏ ván đang chơi?"
+          description="Tim Hồng, sao và trang phục của ván này sẽ mất. Các lá đã mở trong Bộ sưu tập vẫn được giữ."
+          confirmLabel="Bỏ ván này"
+          cancelLabel="Chơi tiếp"
+          onCancel={() => setConfirmRestart(false)}
+          onConfirm={() => {
+            setConfirmRestart(false);
+            onRestart();
+          }}
+        />
+      )}
     </motion.div>
   );
 };

@@ -1,8 +1,9 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { Check, Lock, X } from 'lucide-react';
 import type { GarmentSlot, OutfitState } from '../types';
 import { GARMENT_LABELS, getPresentGarmentSlots, getRemovableGarmentSlots } from '../utils/wardrobe';
 import { OutfitFigure } from './OutfitFigure';
+import { useDialogFocus } from './useDialogFocus';
 
 interface DualGarmentRemovalDialogProps {
   playerNames: readonly [string, string];
@@ -12,8 +13,6 @@ interface DualGarmentRemovalDialogProps {
   onContinueWithoutRemoval: () => void;
 }
 
-const FOCUSABLE = 'button:not([disabled]),[href],[tabindex]:not([tabindex="-1"])';
-
 export const DualGarmentRemovalDialog: React.FC<DualGarmentRemovalDialogProps> = ({
   playerNames,
   outfitStates,
@@ -22,7 +21,7 @@ export const DualGarmentRemovalDialog: React.FC<DualGarmentRemovalDialogProps> =
   onContinueWithoutRemoval,
 }) => {
   const [selections, setSelections] = useState<[GarmentSlot | null, GarmentSlot | null]>([null, null]);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useDialogFocus<HTMLDivElement>({ onEscape: onCancel });
   const titleId = useId();
   const descriptionId = useId();
   const eligible = [
@@ -31,39 +30,6 @@ export const DualGarmentRemovalDialog: React.FC<DualGarmentRemovalDialogProps> =
   ] as const;
   const canComplete = eligible[0].length > 0 && eligible[1].length > 0;
   const names = useMemo(() => [...playerNames] as [string, string], [playerNames]);
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const frame = window.requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>('button')?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCancel();
-        return;
-      }
-      if (event.key !== 'Tab' || !panelRef.current) return;
-      const items = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener('keydown', onKeyDown);
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, [onCancel]);
 
   const choose = (index: 0 | 1, slot: GarmentSlot) => {
     setSelections((current) => {
@@ -75,34 +41,35 @@ export const DualGarmentRemovalDialog: React.FC<DualGarmentRemovalDialogProps> =
 
   return (
     <div className="garment-dialog" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onCancel()}>
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="garment-dialog__panel max-w-3xl">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="garment-dialog__panel garment-swap__panel">
         <header className="garment-dialog__header">
           <div>
-            <span className="garment-dialog__source">Thẻ Tư thế · Cả hai</span>
+            <span className="garment-dialog__source">Theo lá bài · cả hai</span>
             <h2 id={titleId}>Mỗi người chọn 1 món để bỏ</h2>
-            <p id={descriptionId}>Hai lựa chọn chỉ được cập nhật cùng lúc sau khi xác nhận. Hủy sẽ giữ nguyên cả hai nhân vật.</p>
+            <p id={descriptionId}>Hai món chỉ bỏ cùng lúc, sau khi xác nhận. Hủy thì cả hai giữ nguyên.</p>
           </div>
           <button type="button" onClick={onCancel} className="garment-dialog__close" aria-label="Hủy và giữ nguyên trang phục"><X aria-hidden="true" /></button>
         </header>
 
-        <div className="grid max-h-[60svh] gap-4 overflow-y-auto p-1 sm:grid-cols-2">
+        <div className="garment-swap__grid">
           {([0, 1] as const).map((index) => {
             const present = getPresentGarmentSlots(outfitStates[index]);
             return (
-              <section key={index} className="rounded-2xl border border-white/10 bg-black/20 p-3" aria-label={`Chọn đồ của ${names[index]}`}>
-                <h3 className="text-center font-serif-romantic text-lg font-bold text-white">{names[index]}</h3>
-                <OutfitFigure
-                  outfit={outfitStates[index].initial}
-                  state={outfitStates[index]}
-                  interactiveSlots={eligible[index]}
-                  selectedSlot={selections[index]}
-                  previewRemovedSlot={selections[index]}
-                  onSelectSlot={(slot) => choose(index, slot)}
-                  name={names[index]}
-                  active
-                  className="mx-auto max-h-56"
-                />
-                <div className="mt-2 grid gap-2">
+              <section key={index} className="garment-swap__person" aria-label={`Chọn đồ của ${names[index]}`}>
+                <div className="garment-swap__figure">
+                  <OutfitFigure
+                    outfit={outfitStates[index].initial}
+                    state={outfitStates[index]}
+                    interactiveSlots={eligible[index]}
+                    selectedSlot={selections[index]}
+                    previewRemovedSlot={selections[index]}
+                    onSelectSlot={(slot) => choose(index, slot)}
+                    name={names[index]}
+                    active
+                  />
+                </div>
+                <div className="garment-swap__choices">
+                  {present.length === 0 && <p className="text-sm text-neutral-200">Không còn món nào để bỏ.</p>}
                   {present.map((slot) => {
                     const allowed = eligible[index].includes(slot);
                     const selected = selections[index] === slot;

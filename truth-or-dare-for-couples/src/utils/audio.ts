@@ -1,10 +1,16 @@
 // Web Audio Synthesizer for Romantic Ambient Sound Effects and Background Pads
 
+const MUTE_KEY = 'tod_couples_muted';
+
+const readStoredMute = (): boolean => {
+  try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return false; }
+};
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private musicGain: GainNode | null = null;
-  private isMuted: boolean = false;
+  private isMuted: boolean = readStoredMute();
   private musicOscillators: { osc: OscillatorNode; gain: GainNode }[] = [];
   private isMusicPlaying: boolean = false;
   private timerAlarmSources: OscillatorNode[] = [];
@@ -28,12 +34,21 @@ class SoundEngine {
     }
   }
 
+  /** Opens the sound device early: the first sound would otherwise hold up the first draw. */
+  public warmUp() {
+    if (this.isMuted || this.ctx) return;
+    try { this.initCtx(); } catch { /* no sound on this device */ }
+  }
+
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
+    try { localStorage.setItem(MUTE_KEY, this.isMuted ? '1' : '0'); } catch { /* not remembered */ }
     if (this.masterGain) {
       this.masterGain.gain.value = this.isMuted ? 0 : 0.4;
     }
     if (this.isMuted) this.stopTimerAlarm();
+    // Opens the sound device right after this click, not in the middle of the next draw.
+    else setTimeout(() => this.warmUp(), 250);
     return this.isMuted;
   }
 
@@ -41,11 +56,18 @@ class SoundEngine {
     return this.isMuted;
   }
 
+  /** Short vibration on phones for key moments; silent when sound is muted. */
+  public haptic(pattern: number | number[]) {
+    if (this.isMuted || typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+    try { navigator.vibrate(pattern); } catch { /* unsupported */ }
+  }
+
   // Card Flip Chime
   public playCardFlip() {
     try {
+      if (this.isMuted) return;
       this.initCtx();
-      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      if (!this.ctx || !this.masterGain) return;
 
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -72,8 +94,9 @@ class SoundEngine {
   // Shuffle card deck sound effect (soft noise sweep)
   public playShuffle() {
     try {
+      if (this.isMuted) return;
       this.initCtx();
-      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      if (!this.ctx || !this.masterGain) return;
 
       const bufferSize = this.ctx.sampleRate * 0.25;
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
@@ -107,8 +130,9 @@ class SoundEngine {
   // Complete Challenge Confetti Sparkle Sound
   public playCompleteSound() {
     try {
+      if (this.isMuted) return;
       this.initCtx();
-      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      if (!this.ctx || !this.masterGain) return;
 
       const now = this.ctx.currentTime;
       const freqs = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6 harp chord
@@ -139,8 +163,9 @@ class SoundEngine {
   // Timer Tick Sound
   public playTick() {
     try {
+      if (this.isMuted) return;
       this.initCtx();
-      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      if (!this.ctx || !this.masterGain) return;
 
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -172,8 +197,9 @@ class SoundEngine {
     this.stopTimerAlarm();
 
     try {
+      if (this.isMuted) return false;
       this.initCtx();
-      if (!this.ctx || !this.masterGain || this.isMuted) return false;
+      if (!this.ctx || !this.masterGain) return false;
 
       const durationSeconds = Math.min(5, Math.max(0.8, durationMs / 1000));
       const now = this.ctx.currentTime;

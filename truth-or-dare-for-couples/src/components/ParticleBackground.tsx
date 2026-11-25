@@ -24,10 +24,10 @@ export const ParticleBackground: React.FC<ParticleBackgroundProps> = ({ heat = 0
 
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden bg-[#1a1a1a]">
-      {/* Elegant Dark Bokeh Lights */}
-      <div className="bokeh bokeh--drift w-[500px] h-[500px] bg-[#7A1F2B] -top-24 -left-24 opacity-25" />
-      <div className="bokeh bokeh--drift w-[400px] h-[400px] bg-[#FF6B9D] -bottom-16 -right-16 opacity-20" style={{ animationDelay: '-9s' }} />
-      <div className="bokeh w-[350px] h-[350px] bg-[#D4AF37] top-[20%] right-[10%] opacity-15" />
+      {/* Soft lights: gradients, not blurred discs. A blur on something that drifts is worked out again on every frame. */}
+      <div className="bokeh bokeh--drift -left-[206px] -top-[206px] h-[720px] w-[720px] opacity-25" style={{ '--bokeh': '122, 31, 43' } as React.CSSProperties} />
+      <div className="bokeh bokeh--drift -bottom-[174px] -right-[174px] h-[620px] w-[620px] opacity-20" style={{ '--bokeh': '255, 107, 157', animationDelay: '-9s' } as React.CSSProperties} />
+      <div className="bokeh right-[calc(10%-110px)] top-[calc(20%-110px)] h-[570px] w-[570px] opacity-15" style={{ '--bokeh': '212, 175, 55' } as React.CSSProperties} />
 
       {/* Wine Radial Center Gradient Overlay */}
       <div
@@ -52,8 +52,8 @@ export const ParticleBackground: React.FC<ParticleBackgroundProps> = ({ heat = 0
             width: `${p.size}px`,
             height: `${p.size}px`,
             backgroundColor: p.color,
-            // Use filter:drop-shadow instead of box-shadow — GPU-composited, no layout reflow
-            filter: `drop-shadow(0 0 ${p.size * 2}px ${p.color})`,
+            // Painted once with the dot; a drop-shadow filter would be redone on every frame.
+            boxShadow: `0 0 ${p.size * 2}px ${p.color}`,
             animationDuration: `${p.duration}s`,
             animationDelay: `${p.delay}s`,
           }}

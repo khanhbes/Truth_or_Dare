@@ -1,82 +1,92 @@
 import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
-  Heart,
+  BookOpen,
+  Code2,
   Flame,
+  Heart,
+  HelpCircle,
+  LogIn,
+  Play,
+  ShieldCheck,
   Sparkles,
+  Trash2,
   Volume2,
   VolumeX,
-  BookOpen,
-  Play,
-  HelpCircle,
-  Code2,
-  LogOut,
-  LogIn,
-  ShieldCheck,
-  User,
 } from 'lucide-react';
+import type { CardLevel } from '../types';
+import { LEVEL_INFO } from '../data/cards';
 import { soundEngine } from '../utils/audio';
+import { EASE_OUT } from '../utils/motionTokens';
+import type { SavedGameSession } from '../utils/gameSession';
 import { AdminModeButton } from './AdminModeButton';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface IntroScreenProps {
   mode: 'player' | 'developer';
   coupleName?: string;
   unlockedCount?: number;
-  onLogout?: () => void;
   onOpenLogin?: () => void;
   onOpenAccountModal?: () => void;
-  onQuickLoginKhanh?: () => void;
   onStart: () => void;
   onOpenCollection: () => void;
   onOpenRules: () => void;
+  /** An unfinished game kept on this device. */
+  savedGame?: SavedGameSession | null;
+  onResume?: () => void;
+  onDiscardSavedGame?: () => void;
 }
+
+const FOCUS = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200';
+const LEVELS: CardLevel[] = ['gentle', 'intimate', 'passionate'];
 
 export const IntroScreen: React.FC<IntroScreenProps> = ({
   mode,
   coupleName,
   unlockedCount,
-  onLogout,
   onOpenLogin,
   onOpenAccountModal,
-  onQuickLoginKhanh,
   onStart,
   onOpenCollection,
   onOpenRules,
+  savedGame = null,
+  onResume,
+  onDiscardSavedGame,
 }) => {
+  const reduceMotion = useReducedMotion();
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [isMusicOn, setIsMusicOn] = useState(soundEngine.isMusicOn());
+  const isPlayer = mode === 'player';
 
-  const handleToggleMusic = () => {
-    const newState = soundEngine.toggleBackgroundMusic();
-    setIsMusicOn(newState);
-  };
+  const handleToggleMusic = () => setIsMusicOn(soundEngine.toggleBackgroundMusic());
 
   return (
-    <div className="relative z-10 flex flex-col items-center justify-between min-h-[90vh] px-4 py-8 max-w-4xl mx-auto text-center">
-      {/* Top Header Bar with Music & Collection & Account controls */}
-      <div className="w-full px-2 py-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Music Toggle */}
+    <div className="intro-screen">
+      <header className="w-full">
+        <div className="flex items-center justify-between gap-2">
           <button
+            type="button"
             onClick={handleToggleMusic}
-            className="flex min-h-11 items-center gap-2 rounded-full border border-rose-500/30 bg-rose-950/40 px-3 text-xs text-rose-200 transition-all duration-300 hover:border-rose-400 md:text-sm"
+            aria-pressed={isMusicOn}
+            aria-label={isMusicOn ? 'Tắt nhạc nền' : 'Bật nhạc nền'}
+            className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-rose-400/35 bg-rose-950/50 px-3 text-sm text-rose-100 transition-colors hover:border-rose-300 ${FOCUS}`}
           >
-            {isMusicOn ? <Volume2 className="w-4 h-4 text-amber-400 animate-pulse" /> : <VolumeX className="w-4 h-4 text-neutral-400" />}
-            <span>{isMusicOn ? 'Nhạc: Bật' : 'Nhạc: Tắt'}</span>
+            {isMusicOn ? <Volume2 className="h-4 w-4 text-amber-300" aria-hidden="true" /> : <VolumeX className="h-4 w-4 text-neutral-300" aria-hidden="true" />}
+            <span className="hidden sm:inline">{isMusicOn ? 'Nhạc: bật' : 'Nhạc: tắt'}</span>
           </button>
 
-          {/* Single Unified Account Button */}
           {coupleName ? (
             <button
               type="button"
               onClick={onOpenAccountModal}
-              className="flex min-h-11 items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-4 py-1.5 text-xs font-semibold text-emerald-200 shadow-lg hover:border-emerald-300 hover:bg-emerald-900/80 transition-all cursor-pointer"
-              title="Quản lý tài khoản & Đăng xuất"
+              title="Tài khoản của hai bạn"
+              className={`flex min-h-11 min-w-0 items-center gap-2 rounded-full border border-emerald-400/45 bg-emerald-950/70 px-3 text-sm font-semibold text-emerald-100 transition-colors hover:border-emerald-300 sm:px-4 ${FOCUS}`}
             >
-              <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
-              <span className="max-w-[130px] sm:max-w-[200px] truncate text-white">{coupleName}</span>
+              <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+              <span className="min-w-0 max-w-[84px] truncate text-white min-[400px]:max-w-[130px] sm:max-w-[200px]">{coupleName}</span>
               {typeof unlockedCount === 'number' && (
-                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-bold text-emerald-300">
-                  {unlockedCount} thẻ
+                <span className="whitespace-nowrap rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-bold tabular-nums text-emerald-200">
+                  {unlockedCount} lá
                 </span>
               )}
             </button>
@@ -84,91 +94,139 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
             <button
               type="button"
               onClick={onOpenLogin}
-              className="flex min-h-11 items-center gap-2 rounded-full border border-rose-400/50 bg-gradient-to-r from-rose-900/70 to-pink-900/70 px-4 py-1.5 text-xs font-bold text-rose-100 transition-all hover:scale-105 hover:border-rose-300 hover:text-white shadow-lg cursor-pointer"
-              title="Đăng nhập tài khoản"
+              className={`flex min-h-11 items-center gap-2 rounded-full border border-rose-300/50 bg-gradient-to-r from-rose-900/70 to-pink-900/70 px-4 text-sm font-semibold text-rose-50 transition-colors hover:border-rose-200 ${FOCUS}`}
             >
-              <LogIn className="h-4 w-4 text-amber-300" />
+              <LogIn className="h-4 w-4 text-amber-200" aria-hidden="true" />
               <span>Đăng nhập</span>
             </button>
           )}
 
-          {/* Card Collection Button */}
           <button
+            type="button"
             onClick={onOpenCollection}
-            className="flex min-h-11 items-center gap-2 rounded-full border border-amber-500/30 bg-amber-950/40 px-3 text-xs text-amber-200 transition-all duration-300 hover:border-amber-400 md:text-sm cursor-pointer"
+            className={`flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-amber-400/35 bg-amber-950/50 px-3 text-sm text-amber-100 transition-colors hover:border-amber-300 ${FOCUS}`}
           >
-            <BookOpen className="w-4 h-4 text-amber-400" />
-            <span className="hidden min-[370px]:inline">Bộ sưu tập thẻ</span>
+            <BookOpen className="h-4 w-4 text-amber-300" aria-hidden="true" />
+            <span className="hidden min-[340px]:inline">Bộ sưu tập</span>
           </button>
         </div>
 
-        {mode === 'developer' && (
-          <div className="mx-auto mt-3 flex w-full max-w-xs items-center justify-between rounded-full border border-amber-300/20 bg-black/25 px-3 py-1.5 text-[11px]">
-            <span className="inline-flex items-center gap-1.5 font-semibold text-amber-100"><Code2 className="h-3.5 w-3.5" /> Quản trị nội dung</span>
-            <a href="/" className="rounded-full px-2 py-1 text-neutral-400 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200">Xem trang chơi</a>
+        {!isPlayer && (
+          <div className="mx-auto mt-3 flex w-full max-w-xs items-center justify-between rounded-full border border-amber-300/25 bg-black/25 px-3 py-1.5 text-xs">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-amber-100"><Code2 className="h-3.5 w-3.5" aria-hidden="true" /> Quản trị nội dung</span>
+            <a href="/" className={`rounded-full px-2 py-1 text-neutral-300 transition-colors hover:text-white ${FOCUS}`}>Xem trang chơi</a>
           </div>
         )}
-      </div>
+      </header>
 
-      {/* Main Center Intro Section */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.92, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-        className="flex flex-col items-center my-auto py-8"
+        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(14px) scale(0.94)' }}
+        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, transform: 'translateY(0px) scale(1)' }}
+        transition={{ duration: reduceMotion ? 0.12 : 0.7, ease: EASE_OUT }}
+        className="intro-screen__main"
+        data-saved-game={savedGame ? 'true' : undefined}
       >
-        {/* Animated Candle Flame Icon */}
-        <div className="relative mb-6">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-amber-500/20 via-rose-500/10 to-transparent flex items-center justify-center animate-candle-glow">
-            <Flame className="w-10 h-10 text-amber-400 drop-shadow-[0_0_12px_rgba(212,175,55,0.8)]" />
+        <div className="intro-screen__candle" aria-hidden="true">
+          <div className="grid h-full w-full place-items-center rounded-full bg-gradient-to-b from-amber-500/20 via-rose-500/10 to-transparent animate-candle-glow">
+            <Flame className="h-1/2 w-1/2 text-amber-300" />
           </div>
-          <Sparkles className="w-5 h-5 text-rose-300 absolute -top-1 -right-1 animate-pulse" />
+          <Sparkles className="absolute -right-1 -top-1 h-5 w-5 text-rose-300 animate-pulse" />
         </div>
 
-        {/* Title */}
-        <h1 className="serif-title text-5xl sm:text-7xl md:text-8xl font-bold tracking-widest text-[#D4AF37] uppercase mb-3 drop-shadow-[0_0_15px_rgba(212,175,55,0.4)]">
-          Truth or Dare
-        </h1>
-        <p className="serif-title text-xl sm:text-2xl text-[#FF6B9D] pink-glow italic font-medium mb-4">
-          Dành Cho Cặp Đôi • Sự Thật Hay Thách
-        </p>
+        <h1 className="intro-screen__title title-shimmer serif-title">Truth or Dare</h1>
+        <p className="intro-screen__tagline serif-title">Dành cho cặp đôi · Sự thật hay thử thách</p>
 
-        <p className="text-neutral-300 max-w-lg text-sm sm:text-base leading-relaxed font-light mb-8">
-          {mode === 'player'
+        <p className="intro-screen__lead">
+          {isPlayer
             ? 'Khám phá từng lá bài qua những câu hỏi gắn kết và thử thách dành riêng cho hai người.'
             : 'Quản lý toàn bộ nội dung, xem trước thẻ khóa và chỉnh sửa bộ bài dành cho người chơi.'}
         </p>
 
-        {/* Level Badges Preview */}
-        <div className="flex flex-wrap justify-center gap-2 sm:gap-4 mb-10">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs sm:text-sm">
-            <span>🌸</span>
-            <span>Nhẹ nhàng</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-950/50 border border-amber-500/30 text-amber-300 text-xs sm:text-sm">
-            <span>🔥</span>
-            <span>Thân mật</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-950/50 border border-red-500/40 text-red-300 text-xs sm:text-sm">
-            <span>💋</span>
-            <span>Nồng nhiệt</span>
-          </div>
-        </div>
+        <ul className="intro-screen__levels" aria-label="Ba cấp độ">
+          {LEVELS.map((level) => (
+            <li key={level} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${LEVEL_INFO[level].badgeBg}`}>
+              <span aria-hidden="true">{LEVEL_INFO[level].icon}</span>
+              <span>{LEVEL_INFO[level].name}</span>
+            </li>
+          ))}
+        </ul>
 
-        {/* Big Action Play Button */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => {
-            soundEngine.playCardFlip();
-            onStart();
-          }}
-          className="btn-shine relative group px-10 py-4 rounded-full font-medium text-base sm:text-lg text-neutral-900 bg-gold-gradient shadow-[0_0_25px_rgba(212,175,55,0.4)] hover:shadow-[0_0_35px_rgba(255,107,157,0.6)] transition-all duration-300 flex items-center gap-3 cursor-pointer"
-        >
-          {mode === 'player' ? <Play className="w-5 h-5 fill-neutral-900" /> : <Code2 className="h-5 w-5" />}
-          <span className="font-semibold tracking-wide">{mode === 'player' ? 'Bắt Đầu Chơi' : 'Mở Trình Quản Lý'}</span>
-          <Heart className="w-5 h-5 text-rose-900 fill-rose-900 group-hover:scale-125 transition-transform" />
-        </motion.button>
+        {savedGame ? (
+          <section aria-label="Ván đang chơi dở" className="w-full max-w-sm rounded-3xl border border-amber-200/30 bg-[#170d12]/90 p-5">
+            <p className="text-sm font-semibold text-amber-100">Ván đang chơi dở</p>
+            <p className="mt-1 text-base text-neutral-100">
+              {savedGame.player1.avatar} {savedGame.player1.name} & {savedGame.player2.name} {savedGame.player2.avatar}
+            </p>
+            <p className="mt-1 text-sm tabular-nums text-neutral-300">
+              Lượt {savedGame.currentRound}
+              {' · '}
+              {savedGame.journeyPhase === 'standard' || savedGame.journeyPhase === 'position_consent'
+                ? `Tim Hồng ${savedGame.intimacyPercent}%`
+                : `Bộ Tư thế ${savedGame.luxuryIntimacyPercent}%`}
+              {' · '}
+              lưu lúc {new Date(savedGame.savedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <motion.button
+              type="button"
+              whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+              onClick={() => {
+                soundEngine.playCardFlip();
+                onResume?.();
+              }}
+              className={`btn-shine mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-gold-gradient px-6 text-base font-semibold text-neutral-900 shadow-[0_0_25px_rgba(212,175,55,0.4)] ${FOCUS}`}
+            >
+              <Play className="h-5 w-5 fill-neutral-900" aria-hidden="true" />
+              Tiếp tục ván
+            </motion.button>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onStart}
+                className={`min-h-11 rounded-full border border-white/20 bg-white/[0.05] px-3 text-sm font-medium text-neutral-100 transition-colors hover:border-white/40 ${FOCUS}`}
+              >
+                Chơi ván mới
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDiscard(true)}
+                className={`flex min-h-11 items-center justify-center gap-1.5 rounded-full px-3 text-sm text-neutral-300 transition-colors hover:text-rose-200 ${FOCUS}`}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" /> Bỏ ván này
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-neutral-300">Ván mới sẽ thay ván đang lưu khi hai bạn vào bàn.</p>
+          </section>
+        ) : (
+          <motion.button
+            type="button"
+            whileHover={reduceMotion ? undefined : { scale: 1.04 }}
+            whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+            onClick={() => {
+              soundEngine.playCardFlip();
+              onStart();
+            }}
+            className={`btn-shine group flex min-h-14 items-center gap-3 rounded-full bg-gold-gradient px-10 text-lg font-semibold text-neutral-900 shadow-[0_0_25px_rgba(212,175,55,0.4)] transition-shadow duration-300 hover:shadow-[0_0_35px_rgba(255,107,157,0.6)] ${FOCUS}`}
+          >
+            {isPlayer ? <Play className="h-5 w-5 fill-neutral-900" aria-hidden="true" /> : <Code2 className="h-5 w-5" aria-hidden="true" />}
+            <span>{isPlayer ? 'Bắt đầu chơi' : 'Mở trình quản lý'}</span>
+            <Heart className="h-5 w-5 fill-rose-900 text-rose-900" aria-hidden="true" />
+          </motion.button>
+        )}
+
+        {confirmDiscard && (
+          <ConfirmDialog
+            icon={<Trash2 className="h-5 w-5" />}
+            title="Bỏ ván đang lưu?"
+            description="Ván này sẽ bị xóa khỏi máy. Lá đã mở vẫn được giữ."
+            confirmLabel="Bỏ ván"
+            cancelLabel="Giữ lại"
+            onCancel={() => setConfirmDiscard(false)}
+            onConfirm={() => {
+              setConfirmDiscard(false);
+              onDiscardSavedGame?.();
+            }}
+          />
+        )}
 
         <button
           type="button"
@@ -176,22 +234,21 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
             soundEngine.playTick();
             onOpenRules();
           }}
-          className="mt-4 flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium text-neutral-300 transition-all hover:bg-white/[0.04] hover:text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 cursor-pointer"
+          className={`mt-3 flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/[0.05] hover:text-rose-100 ${FOCUS}`}
         >
-          <HelpCircle className="h-4 w-4 text-rose-300" />
+          <HelpCircle className="h-4 w-4 text-rose-300" aria-hidden="true" />
           <span>Cách chơi & luật phạt</span>
         </button>
       </motion.div>
 
-      {/* Footer tagline */}
-      <div className="flex flex-col items-center gap-3">
-        <div className="text-xs text-neutral-500 font-light flex items-center gap-1">
-          <span>Thiết kế dành riêng cho 2 người</span>
-          <span className="text-rose-500">♥</span>
-          <span>Giữ trọn cảm xúc ngọt ngào</span>
-        </div>
-        {mode === 'player' && <AdminModeButton />}
-      </div>
+      <footer className="intro-screen__footer">
+        {isPlayer && (
+          <p className="text-sm text-neutral-300">
+            <strong className="font-semibold text-rose-200">18+</strong> · Dành cho hai người lớn, tự nguyện, dừng lúc nào cũng được.
+          </p>
+        )}
+        {isPlayer && <AdminModeButton />}
+      </footer>
     </div>
   );
 };

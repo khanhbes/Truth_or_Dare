@@ -184,6 +184,39 @@ test('Position draws balance families within a session', () => {
   assert.ok(otherFamilies / runs > 0.8, `non-oral share ${otherFamilies / runs}`);
 });
 
+test('Position family balance also counts cards drawn on the partner\'s turns', () => {
+  const turnCard = (id: string, family: 'oral' | 'blowjob' | 'handjob', turnAudience: 'male' | 'female' | 'both'): CardItem => {
+    const card = positionCard(id, 7, family);
+    return { ...card, position: { ...card.position!, turnAudience } };
+  };
+  const cards = [
+    turnCard('blow-f1', 'blowjob', 'female'),
+    turnCard('blow-f2', 'blowjob', 'female'),
+    turnCard('blow-m1', 'blowjob', 'male'),
+    turnCard('blow-m2', 'blowjob', 'male'),
+    turnCard('oral-b1', 'oral', 'both'),
+    turnCard('hand-b1', 'handjob', 'both'),
+  ];
+  const random = seededRandom(11);
+  const runs = 400;
+  let blowjob = 0;
+  for (let run = 0; run < runs; run += 1) {
+    // Blowjob was drawn twice on her turns; on his turn it must not look unseen.
+    const result = selectLuxuryPositionCard({
+      cards,
+      actorIndex: 0,
+      outfits: emptyOutfits,
+      usedCardIds: ['blow-f1', 'blow-f2'],
+      luxuryPercent: 0,
+      config: DEFAULT_LUXURY_PROGRESSION_CONFIG,
+      random,
+    });
+    if (result.card?.position?.family === 'blowjob') blowjob += 1;
+  }
+  // Weight 1/(1+2)² against 1 and 1 → ≈5%; before the fix it was ≈33%.
+  assert.ok(blowjob / runs < 0.15, `blowjob share ${blowjob / runs}`);
+});
+
 test('Have Sex is offered as three distinct face-down cards, unopened first', () => {
   const finals = ['f1', 'f2', 'f3', 'f4', 'f5'].map((id) => positionCard(id, 10));
   const forced = selectLuxuryPositionCard({
@@ -219,4 +252,25 @@ test('the Have Sex chance at 80–99% no longer depends on Luxury star weights',
   assert.equal(DEFAULT_LUXURY_PROGRESSION_CONFIG.bands[4].starWeights[10], 0);
   assert.equal(result.probabilities.finalCardChance, 0.05);
   assert.equal(result.finalCandidates?.[0]?.id, 'final');
+});
+
+test('a regular Position card saved at 10★ is still drawn (as 9★) and still fills Luxury', () => {
+  const tenStarBlow = positionCard('blow-10', 10, 'blowjob');
+  assert.equal(tenStarBlow.position?.difficultyStars, 10);
+  let drawn = 0;
+  const random = seededRandom(3);
+  for (let run = 0; run < 200; run += 1) {
+    const result = selectLuxuryPositionCard({
+      cards: [tenStarBlow, positionCard('final', 10)],
+      actorIndex: 0,
+      outfits: emptyOutfits,
+      usedCardIds: [],
+      luxuryPercent: 85,
+      config: DEFAULT_LUXURY_PROGRESSION_CONFIG,
+      random,
+    });
+    if (result.card?.id === 'blow-10') drawn += 1;
+  }
+  // Only the 5% Have Sex roll can pre-empt it in the 80–99% band.
+  assert.ok(drawn / 200 > 0.85, `drawn share ${drawn / 200}`);
 });

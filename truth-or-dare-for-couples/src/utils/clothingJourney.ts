@@ -122,8 +122,10 @@ export const resolveClothingOpportunity = (
     pityCounter: completed ? 0 : state.pityCounter,
   };
   if (completed && target !== undefined) {
-    next.firstRemoval[target] = true;
-    next.removalCount[target] += 1;
+    // Copy instead of mutating: the previous state's arrays must stay untouched
+    // (React may run this updater twice in Strict Mode).
+    next.firstRemoval = state.firstRemoval.map((removed, index) => removed || index === target) as [boolean, boolean];
+    next.removalCount = state.removalCount.map((count, index) => count + (index === target ? 1 : 0)) as [number, number];
   }
   return next;
 };

@@ -1,9 +1,10 @@
-import React, { lazy, Suspense, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { lazy, Suspense, useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { ParticleBackground } from './components/ParticleBackground';
 import { IntroScreen } from './components/IntroScreen';
 import { SetupScreen } from './components/SetupScreen';
 import { GameTable } from './components/GameTable';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { SummaryModal } from './components/SummaryModal';
 import { RulesModal } from './components/RulesModal';
 import {
@@ -72,6 +73,17 @@ import {
 } from './utils/coupleSession';
 import { parseStoredCards, type CatalogPayload } from './utils/cardSchema';
 import {
+  belongsToCurrentPlayer,
+  clearGameSession,
+  loadGameSession,
+  saveGameSession,
+  type GameSessionState,
+  type SavedGameSession,
+  type TableSnapshot,
+} from './utils/gameSession';
+import { soundEngine } from './utils/audio';
+import { resolveUnlockedCardsOnLoad } from './utils/unlockSync';
+import {
   catalogCache,
   createCloudBackup,
   deleteCloudCard,
@@ -104,12 +116,28 @@ const STORAGE_KEYS = {
   PLAYER1: 'tod_couples_player1',
   PLAYER2: 'tod_couples_player2',
   UNLOCKED_CARDS: 'tod_couples_unlocked_cards',
+  UNLOCKED_OWNER: 'tod_couples_unlocked_owner',
   DELETED_SYSTEM_CARDS: 'tod_couples_deleted_system_cards',
   PROGRESSION_CONFIG: 'tod_couples_progression_config',
   LUXURY_PROGRESSION_CONFIG: 'tod_couples_luxury_progression_config',
 };
 
 type AppMode = 'player' | 'developer';
+
+/** This tab only: a guest who refreshes is not sent back to the login screen. */
+const GUEST_TAB_KEY = 'tod_guest_tab';
+/** This tab only: a game was running, so a refresh goes straight back to it. */
+const GAME_TAB_KEY = 'tod_game_tab';
+
+const readTabFlag = (key: string): boolean => {
+  try { return sessionStorage.getItem(key) === '1'; } catch { return false; }
+};
+const writeTabFlag = (key: string, on: boolean) => {
+  try {
+    if (on) sessionStorage.setItem(key, '1');
+    else sessionStorage.removeItem(key);
+  } catch { /* Private windows may block storage; the game still works. */ }
+};
 
 /** Built-in cards plus the audit expansion (clothing cards and admin frames). */
 const SYSTEM_CARDS: readonly CardItem[] = [...INITIAL_CARDS, ...EXPANSION_CARDS];
@@ -178,12 +206,10 @@ export default function App() {
     message: 'Đang kiểm tra catalog cloud…',
   });
   const datasetRevisionRef = useRef(0);
-  const screenRef = useRef<'intro' | 'setup' | 'game' | 'collection'>('intro');
   const catalogSyncModeRef = useRef<CatalogSyncStatus['mode']>('loading');
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Keep refs in sync so async closures never read stale values
-  useEffect(() => { screenRef.current = screen; }, [screen]);
   useEffect(() => { catalogSyncModeRef.current = catalogSync.mode; }, [catalogSync.mode]);
 
   // Every view is a full-page destination. Reset the document scroll before
@@ -261,6 +287,119 @@ export default function App() {
   const [pendingDifficultyBoosts, setPendingDifficultyBoosts] = useState<PendingDifficultyBoost[]>([]);
   const [rewardEvents, setRewardEvents] = useState<RewardEvent[]>([]);
 
+  // A running game is kept on this device (see utils/gameSession).
+  const [savedGame, setSavedGame] = useState<SavedGameSession | null>(() =>
+    (appMode === 'player' ? loadGameSession() : null),
+  );
+  const [resumeSnapshot, setResumeSnapshot] = useState<TableSnapshot | null>(null);
+  const [gameId, setGameId] = useState(0);
+  const [endRequestId, setEndRequestId] = useState(0);
+  const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+  const [unlockSyncPending, setUnlockSyncPending] = useState(false);
+  // The server could not be reached, so who owns the list on this device is unknown.
+  const [sessionUnreachable, setSessionUnreachable] = useState(false);
+  const tableSnapshotRef = useRef<TableSnapshot | null>(null);
+  const saveTimerRef = useRef(0);
+  const gameIsOpen = screen === 'game' || (screen === 'collection' && collectionReturnScreen === 'game');
+  const gameIsRunning = gameIsOpen && gameEndReason === null;
+
+  const sessionRef = useRef<Omit<GameSessionState, 'table'> | null>(null);
+  sessionRef.current = {
+    owner: coupleSession?.loggedIn ? coupleSession.coupleName ?? null : null,
+    player1,
+    player2,
+    settings,
+    currentPlayerIndex,
+    currentRound,
+    outfitStates,
+    clothingRemovalEvents,
+    intimacyPercent,
+    luxuryIntimacyPercent,
+    intimacyEvents,
+    journeyPhase,
+    sessionPositionCardIds,
+    positionSessionStats,
+    cardResolutionEvents,
+    playerRewards,
+    pendingDifficultyBoosts,
+    rewardEvents,
+  };
+  const gameOpenRef = useRef(false);
+  gameOpenRef.current = gameIsOpen;
+  const canSaveRef = useRef(false);
+  canSaveRef.current = gameIsRunning && !gameNavigationLocked;
+
+  const persistGame = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    if (!canSaveRef.current || !sessionRef.current || !tableSnapshotRef.current) return;
+    saveGameSession({ ...sessionRef.current, table: tableSnapshotRef.current });
+  }, []);
+  // The table and this component change in the same moment; saving a little later catches both.
+  const scheduleGameSave = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(persistGame, 250);
+  }, [persistGame]);
+  const handleTableSnapshot = useCallback((snapshot: TableSnapshot) => {
+    tableSnapshotRef.current = snapshot;
+    scheduleGameSave();
+  }, [scheduleGameSave]);
+
+  useEffect(() => {
+    if (gameIsRunning) scheduleGameSave();
+  }, [
+    gameIsRunning, gameNavigationLocked, scheduleGameSave, player1, player2, settings, currentPlayerIndex,
+    currentRound, outfitStates, clothingRemovalEvents, intimacyPercent, luxuryIntimacyPercent, intimacyEvents,
+    journeyPhase, sessionPositionCardIds, positionSessionStats, cardResolutionEvents, playerRewards,
+    pendingDifficultyBoosts, rewardEvents,
+  ]);
+
+  useEffect(() => {
+    writeTabFlag(GAME_TAB_KEY, gameIsRunning);
+  }, [gameIsRunning]);
+
+  useEffect(() => {
+    const saveWhenHidden = () => { if (document.visibilityState === 'hidden') persistGame(); };
+    window.addEventListener('pagehide', persistGame);
+    window.addEventListener('beforeunload', persistGame);
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', persistGame);
+      window.removeEventListener('beforeunload', persistGame);
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+    };
+  }, [persistGame]);
+
+  const forgetGame = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    tableSnapshotRef.current = null;
+    clearGameSession();
+    setSavedGame(null);
+    setResumeSnapshot(null);
+  }, []);
+
+  // Browsers only allow sound after a first tap or key; get it ready in a quiet moment after that.
+  useEffect(() => {
+    let timer = 0;
+    const warmUp = () => {
+      window.removeEventListener('pointerdown', warmUp);
+      window.removeEventListener('keydown', warmUp);
+      timer = window.setTimeout(() => soundEngine.warmUp(), 700);
+    };
+    window.addEventListener('pointerdown', warmUp);
+    window.addEventListener('keydown', warmUp);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointerdown', warmUp);
+      window.removeEventListener('keydown', warmUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!resumeNotice) return;
+    const timeout = window.setTimeout(() => setResumeNotice(null), 4200);
+    return () => window.clearTimeout(timeout);
+  }, [resumeNotice]);
+
   useEffect(() => {
     if (appMode === 'developer') return;
     let active = true;
@@ -274,16 +413,27 @@ export default function App() {
       if (cSession.loggedIn) {
         setCoupleSession(cSession);
         setPlayerSession({ loggedIn: true, displayName: cSession.coupleName });
-        const cards = Array.isArray(cSession.unlockedCardIds) ? cSession.unlockedCardIds : [];
-        setUnlockedCardIds(cards);
-        try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
+        let localOwner: string | null = null;
+        try { localOwner = localStorage.getItem(STORAGE_KEYS.UNLOCKED_OWNER); } catch {}
+        const { cardIds, needsUpload } = resolveUnlockedCardsOnLoad({
+          serverIds: Array.isArray(cSession.unlockedCardIds) ? cSession.unlockedCardIds : [],
+          localIds: loadStoredStringArray(STORAGE_KEYS.UNLOCKED_CARDS),
+          localOwner,
+          accountName: cSession.coupleName,
+        });
+        setUnlockedCardIds(cardIds);
+        if (needsUpload) void uploadUnlockedCards(cardIds);
+      } else if (pSession.loggedIn) {
+        setPlayerSession(pSession);
+      } else if (readTabFlag(GUEST_TAB_KEY)) {
+        setPlayerSession({ loggedIn: true, displayName: 'Khách' });
       } else {
-        if (pSession.loggedIn) {
-          setPlayerSession(pSession);
-        } else {
-          setPlayerSession({ loggedIn: false });
+        setPlayerSession({ loggedIn: false });
+        if (cSession.unreachable) {
+          setPlayerSessionError('Chưa kết nối được máy chủ. Hai bạn vẫn có thể chơi ngay; lá đã mở trên máy vẫn được giữ.');
         }
       }
+      setSessionUnreachable(Boolean(cSession.unreachable));
     }).catch((error) => {
       if (!active) return;
       setPlayerSession({ loggedIn: false });
@@ -428,10 +578,12 @@ export default function App() {
         running = false;
       }
     };
-    const onVisibility = () => { if (document.visibilityState === 'visible') void refreshCatalog(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !gameOpenRef.current) void refreshCatalog();
+    };
     const interval = window.setInterval(() => {
       // Suppress mid-game polling to avoid catalog churn during gameplay
-      if (screenRef.current !== 'game') void refreshCatalog();
+      if (!gameOpenRef.current) void refreshCatalog();
     }, 10_000);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -537,11 +689,18 @@ export default function App() {
     } catch {}
   }, [favorites]);
 
+  // The list is stored together with whose it is, so accounts never mix.
   useEffect(() => {
+    if (appMode === 'player' && playerSession === null) return;
     try {
       localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(unlockedCardIds));
+      if (coupleSession?.loggedIn && coupleSession.coupleName) {
+        localStorage.setItem(STORAGE_KEYS.UNLOCKED_OWNER, coupleSession.coupleName);
+      } else if (!sessionUnreachable) {
+        localStorage.removeItem(STORAGE_KEYS.UNLOCKED_OWNER);
+      }
     } catch {}
-  }, [unlockedCardIds]);
+  }, [appMode, playerSession === null, unlockedCardIds, coupleSession?.loggedIn, coupleSession?.coupleName, sessionUnreachable]);
 
   useEffect(() => {
     if (catalogSync.mode !== 'local' && catalogSync.mode !== 'draft') return;
@@ -760,6 +919,26 @@ export default function App() {
     });
   };
 
+  const unlockedCardIdsRef = useRef(unlockedCardIds);
+  unlockedCardIdsRef.current = unlockedCardIds;
+
+  /** Sends the opened cards to the account; a failed upload is remembered and retried. */
+  const uploadUnlockedCards = async (cardIds: string[]) => {
+    const result = await syncCoupleUnlockedCards(cardIds);
+    setUnlockSyncPending(!result?.success);
+  };
+
+  useEffect(() => {
+    if (!unlockSyncPending || !coupleSession?.loggedIn) return;
+    const retry = () => { void uploadUnlockedCards(unlockedCardIdsRef.current); };
+    const interval = window.setInterval(retry, 60_000);
+    window.addEventListener('online', retry);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('online', retry);
+    };
+  }, [unlockSyncPending, coupleSession?.loggedIn]);
+
   // Add custom card
   const handleAddCustomCard = (newCard: CardItem) => {
     setCustomCards((prev) => [newCard, ...prev]);
@@ -771,14 +950,11 @@ export default function App() {
   };
 
   const handleUnlockCard = (cardId: string) => {
-    setUnlockedCardIds((current) => {
-      if (current.includes(cardId)) return current;
-      const next = [...current, cardId];
-      if (coupleSession?.loggedIn) {
-        void syncCoupleUnlockedCards(next);
-      }
-      return next;
-    });
+    if (unlockedCardIdsRef.current.includes(cardId)) return;
+    const next = [...unlockedCardIdsRef.current, cardId];
+    unlockedCardIdsRef.current = next;
+    setUnlockedCardIds(next);
+    if (coupleSession?.loggedIn) void uploadUnlockedCards(next);
   };
 
   const handleDeleteCard = (card: CardItem) => {
@@ -997,7 +1173,71 @@ export default function App() {
     setRewardEvents([]);
     setGameEndReason(null);
     setShowSummary(false);
+    forgetGame();
+    setGameId((id) => id + 1);
     setScreen('game');
+  };
+
+  /** Puts a saved game back on the table exactly where it stopped. */
+  const handleResumeGame = (session: SavedGameSession) => {
+    setPlayer1(session.player1);
+    setPlayer2(session.player2);
+    setSettings(session.settings);
+    setCurrentPlayerIndex(session.currentPlayerIndex);
+    setCurrentRound(session.currentRound);
+    setOutfitStates(session.outfitStates);
+    setClothingRemovalEvents(session.clothingRemovalEvents);
+    setIntimacyPercent(session.intimacyPercent);
+    setLuxuryIntimacyPercent(session.luxuryIntimacyPercent);
+    setIntimacyEvents(session.intimacyEvents);
+    setJourneyPhase(session.journeyPhase);
+    setSessionPositionCardIds(session.sessionPositionCardIds);
+    setPositionSessionStats(session.positionSessionStats);
+    setCardResolutionEvents(session.cardResolutionEvents);
+    setPlayerRewards(session.playerRewards);
+    setPendingDifficultyBoosts(session.pendingDifficultyBoosts);
+    setRewardEvents(session.rewardEvents);
+    setGameEndReason(null);
+    setShowSummary(false);
+    setGameNavigationLocked(false);
+    tableSnapshotRef.current = session.table;
+    setResumeSnapshot(session.table);
+    setSavedGame(null);
+    setGameId((id) => id + 1);
+    setResumeNotice('Đã khôi phục ván đang chơi.');
+    setScreen('game');
+  };
+
+  const resumableGame = savedGame
+    && playerSession?.loggedIn
+    && belongsToCurrentPlayer(savedGame, coupleSession?.loggedIn ? coupleSession.coupleName : null)
+    ? savedGame
+    : null;
+
+  // A refresh in the same tab goes straight back to the table.
+  const autoResumeRef = useRef(appMode === 'player' && readTabFlag(GAME_TAB_KEY));
+  useEffect(() => {
+    if (!autoResumeRef.current || playerSession === null) return;
+    if (!playerSession.loggedIn) return;
+    autoResumeRef.current = false;
+    if (resumableGame && screen === 'intro') handleResumeGame(resumableGame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerSession, coupleSession]);
+
+  /** After a crash: back to the first screen, where the saved game can be continued or dropped. */
+  const handleLeaveBrokenGame = () => {
+    setGameNavigationLocked(false);
+    setShowSummary(false);
+    setGameEndReason(null);
+    setSavedGame(loadGameSession());
+    setScreen('intro');
+  };
+
+  /** After a crash: the last saved turn. */
+  const handleRecoverGame = () => {
+    const session = loadGameSession();
+    if (session) handleResumeGame(session);
+    else handleLeaveBrokenGame();
   };
 
   // Turn rotation
@@ -1029,18 +1269,40 @@ export default function App() {
     setRewardEvents([]);
     setShowSummary(false);
     setGameEndReason(null);
+    forgetGame();
     setScreen('setup');
   };
 
   const handleFinishGame = (reason: GameEndReason) => {
+    forgetGame();
     setGameEndReason(reason);
     setShowSummary(true);
   };
 
   const handleReturnHome = () => {
+    forgetGame();
     setShowSummary(false);
     setGameEndReason(null);
     setScreen('intro');
+  };
+
+  const signInCouple = async (coupleName: string, pin: string) => {
+    try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
+    // A guest's cards join the account; cards of another account stay with that account.
+    const session = await loginCouple(coupleName, pin, coupleSession?.loggedIn ? [] : unlockedCardIds);
+    setCoupleSession(session);
+    setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+    setUnlockedCardIds(Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : []);
+    setUnlockSyncPending(false);
+  };
+
+  const createCouple = async (coupleName: string, pin: string) => {
+    try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
+    const session = await registerCouple(coupleName, pin);
+    setCoupleSession(session);
+    setPlayerSession({ loggedIn: true, displayName: session.coupleName });
+    setUnlockedCardIds([]);
+    setUnlockSyncPending(false);
   };
 
   const handleLogout = async () => {
@@ -1055,12 +1317,59 @@ export default function App() {
     setPlayerSession({ loggedIn: false });
     setUnlockedCardIds([]);
     try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
+    setUnlockSyncPending(false);
+    writeTabFlag(GUEST_TAB_KEY, false);
+    forgetGame();
     setShowAccountModal(false);
     setForceShowLoginScreen(false);
     setScreen('intro');
   };
 
-  const keepGameMounted = screen === 'game' || (screen === 'collection' && collectionReturnScreen === 'game');
+  // One extra history entry catches the Back button (and the phone's back
+  // gesture): it closes what is open or asks first, instead of leaving the site.
+  const overlayOpen = showRules || showAccountModal || (showSummary && gameEndReason === null);
+  const guardBack = appMode === 'player' && Boolean(playerSession?.loggedIn) && (screen !== 'intro' || overlayOpen);
+  const guardBackRef = useRef(false);
+  guardBackRef.current = guardBack;
+  const removingGuardRef = useRef(false);
+  useEffect(() => {
+    if (appMode !== 'player') return;
+    const guarded = Boolean(window.history.state?.todGuard);
+    if (guardBack && !guarded) {
+      window.history.pushState({ todGuard: true }, '');
+    } else if (!guardBack && guarded && !removingGuardRef.current) {
+      // Back on the first screen: one Back should leave again.
+      removingGuardRef.current = true;
+      window.history.back();
+    }
+  }, [appMode, guardBack]);
+  const handleBackRef = useRef<() => void>(() => {});
+  handleBackRef.current = () => {
+    if (showRules) setShowRules(false);
+    else if (showAccountModal) setShowAccountModal(false);
+    else if (showSummary && gameEndReason === null) setShowSummary(false);
+    else if (screen === 'collection') setScreen(collectionReturnScreen);
+    else if (screen === 'setup') setScreen('intro');
+    else if (screen === 'game' && gameEndReason === null) setEndRequestId((id) => id + 1);
+    else if (screen === 'game') handleReturnHome();
+  };
+  useEffect(() => {
+    if (appMode !== 'player') return;
+    const onPopState = () => {
+      if (removingGuardRef.current) removingGuardRef.current = false;
+      else handleBackRef.current();
+      // Still inside the app: keep catching the next Back.
+      window.setTimeout(() => {
+        if (guardBackRef.current && !window.history.state?.todGuard) {
+          window.history.pushState({ todGuard: true }, '');
+        }
+      }, 0);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [appMode]);
+
+  const keepGameMounted = gameIsOpen;
 
   if (appMode === 'player' && playerSession === null) {
     return (
@@ -1072,7 +1381,7 @@ export default function App() {
 
   if (appMode === 'developer') {
     return (
-      <div className="relative min-h-screen overflow-x-hidden">
+      <div className="relative min-h-screen overflow-x-hidden supports-[overflow:clip]:overflow-x-clip">
         <ParticleBackground />
         <Suspense fallback={<div className="relative z-10 grid min-h-screen place-items-center text-sm text-amber-100">Đang mở trang quản trị…</div>}>
           <AdminDashboard
@@ -1110,27 +1419,17 @@ export default function App() {
           setPlayerSessionError(null);
         }}
         onCoupleLogin={async (coupleName, pin) => {
-          try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const session = await loginCouple(coupleName, pin, unlockedCardIds);
-          setCoupleSession(session);
-          setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-          const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
-          setUnlockedCardIds(cards);
-          try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
+          await signInCouple(coupleName, pin);
           setForceShowLoginScreen(false);
           setPlayerSessionError(null);
         }}
         onCoupleRegister={async (coupleName, pin) => {
-          try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-          const session = await registerCouple(coupleName, pin);
-          setCoupleSession(session);
-          setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-          setUnlockedCardIds([]);
-          try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
+          await createCouple(coupleName, pin);
           setForceShowLoginScreen(false);
           setPlayerSessionError(null);
         }}
         onSkip={() => {
+          writeTabFlag(GUEST_TAB_KEY, true);
           setForceShowLoginScreen(false);
           setPlayerSession({ loggedIn: true, displayName: 'Khách' });
         }}
@@ -1139,7 +1438,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden">
+    <div className="relative min-h-screen overflow-x-hidden supports-[overflow:clip]:overflow-x-clip">
       {/* Romantic Ambient Particle Background */}
       <ParticleBackground heat={screen === 'game' ? (journeyPhase === 'standard' ? intimacyPercent / 100 : 1) : 0} />
 
@@ -1151,12 +1450,14 @@ export default function App() {
             mode={appMode}
             coupleName={coupleSession?.coupleName}
             unlockedCount={unlockedCardIds.length}
-            onLogout={handleLogout}
             onOpenLogin={() => setForceShowLoginScreen(true)}
             onOpenAccountModal={() => setShowAccountModal(true)}
-            onStart={() => appMode === 'developer' ? openCollection('intro') : setScreen('setup')}
+            onStart={() => setScreen('setup')}
             onOpenCollection={() => openCollection('intro')}
             onOpenRules={() => setShowRules(true)}
+            savedGame={resumableGame}
+            onResume={() => { if (resumableGame) handleResumeGame(resumableGame); }}
+            onDiscardSavedGame={forgetGame}
           />
           </div>
         )}
@@ -1180,7 +1481,28 @@ export default function App() {
 
         {keepGameMounted && (
           <div className="screen-fade" hidden={screen !== 'game'} aria-hidden={screen !== 'game' || undefined}>
+            <ErrorBoundary
+              key={gameId}
+              fallback={(
+                <div className="mx-auto grid min-h-[80svh] max-w-md place-items-center px-4 text-center">
+                  <div className="rounded-3xl border border-rose-300/25 bg-[#1a0b11]/95 p-6 text-white">
+                    <h2 className="font-serif-romantic text-2xl font-bold">Bàn chơi gặp trục trặc</h2>
+                    <p className="mt-2 text-sm leading-relaxed text-neutral-300">
+                      Ván của hai bạn đã được lưu. Khôi phục để chơi tiếp từ lượt gần nhất.
+                    </p>
+                    <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                      <button type="button" onClick={handleLeaveBrokenGame} className="min-h-11 rounded-full border border-white/15 px-4 text-sm font-semibold">Về trang đầu</button>
+                      <button type="button" onClick={handleRecoverGame} className="min-h-11 rounded-full bg-gold-gradient px-4 text-sm font-bold text-neutral-950">Khôi phục ván</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            >
             <GameTable
+            key={gameId}
+            initialSnapshot={resumeSnapshot}
+            onSnapshot={handleTableSnapshot}
+            endRequestId={endRequestId}
             player1={player1}
             player2={player2}
             currentPlayerIndex={currentPlayerIndex}
@@ -1199,7 +1521,7 @@ export default function App() {
             coupleName={coupleSession?.coupleName}
             onOpenAccountModal={() => setShowAccountModal(true)}
             onFinishGame={handleFinishGame}
-            isSuspended={screen !== 'game' || showRules || showSummary}
+            isSuspended={screen !== 'game' || showRules || showSummary || showAccountModal}
             onNavigationLockChange={setGameNavigationLocked}
             onUpdatePlayers={(p1, p2) => {
               setPlayer1(p1);
@@ -1235,6 +1557,7 @@ export default function App() {
               setPositionSessionStats((stats) => applyPositionResolution(stats, event));
             }}
           />
+          </ErrorBoundary>
           </div>
         )}
 
@@ -1242,18 +1565,18 @@ export default function App() {
           <div className="screen-fade">
           <Suspense fallback={<div className="grid min-h-screen place-items-center text-sm text-rose-200">Đang mở Bộ sưu tập…</div>}>
             <CardCollection
-            cards={appMode === 'developer' ? allCards : playerCards}
+            cards={playerCards}
             mode={appMode}
-            unlockedCardIds={appMode === 'developer' || !accountCatalog
+            unlockedCardIds={!accountCatalog
               ? unlockedCardIds
               : [...unlockedCardIds, ...accountCatalog.customCards.map((card) => card.id)]}
             backDestination={collectionReturnScreen === 'game' ? 'game' : 'home'}
             favorites={favorites}
             onToggleFavorite={handleToggleFavorite}
-            onAddCustomCard={appMode === 'developer' ? handleAddCustomCard : accountCatalog ? handleAccountAddCard : undefined}
-            onUpdateCard={appMode === 'developer' ? handleUpdateCard : accountCatalog ? handleAccountUpdateCard : undefined}
-            onDeleteCard={appMode === 'developer' ? handleDeleteCard : accountCatalog ? handleAccountDeleteCard : undefined}
-            accountDeck={appMode === 'player' && accountCatalog ? {
+            onAddCustomCard={accountCatalog ? handleAccountAddCard : undefined}
+            onUpdateCard={accountCatalog ? handleAccountUpdateCard : undefined}
+            onDeleteCard={accountCatalog ? handleAccountDeleteCard : undefined}
+            accountDeck={accountCatalog ? {
               ownCardIds: accountCatalog.customCards.map((card) => card.id),
               hiddenCards: hiddenAccountCards,
               onRestoreCard: handleAccountRestoreCard,
@@ -1261,14 +1584,7 @@ export default function App() {
               statusMessage: accountDeckMessage,
             } : undefined}
             progressionConfig={progressionConfig}
-            onProgressionConfigChange={appMode === 'developer' ? handleProgressionConfigChange : undefined}
             luxuryProgressionConfig={luxuryProgressionConfig}
-            onLuxuryProgressionConfigChange={appMode === 'developer' ? handleLuxuryProgressionConfigChange : undefined}
-            catalogSync={appMode === 'developer' ? catalogSync : undefined}
-            playerStats={appMode === 'developer' ? adminPlayerStats : undefined}
-            onExportCatalog={appMode === 'developer' ? handleExportCatalog : undefined}
-            onImportCatalog={appMode === 'developer' ? handleImportCatalog : undefined}
-            onCreateCloudBackup={appMode === 'developer' ? handleCreateCloudBackup : undefined}
             coupleName={coupleSession?.coupleName}
             onOpenAccountModal={() => setShowAccountModal(true)}
             onBack={() => setScreen(collectionReturnScreen)}
@@ -1306,7 +1622,7 @@ export default function App() {
       )}
 
       <AnimatePresence>
-        {showRules && <RulesModal onClose={() => setShowRules(false)} />}
+        {showRules && <RulesModal inGame={screen === 'game'} onClose={() => setShowRules(false)} />}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -1314,32 +1630,27 @@ export default function App() {
           <CoupleAccountModal
             coupleSession={coupleSession}
             unlockedCardIds={unlockedCardIds}
-            onLogin={async (coupleName, pin) => {
-              try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const session = await loginCouple(coupleName, pin, unlockedCardIds);
-              setCoupleSession(session);
-              setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-              const cards = Array.isArray(session.unlockedCardIds) ? session.unlockedCardIds : [];
-              setUnlockedCardIds(cards);
-              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
-            }}
-            onRegister={async (coupleName, pin) => {
-              try { sessionStorage.removeItem('tod_deliberate_logout'); } catch {}
-              const session = await registerCouple(coupleName, pin);
-              setCoupleSession(session);
-              setPlayerSession({ loggedIn: true, displayName: session.coupleName });
-              setUnlockedCardIds([]);
-              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify([])); } catch {}
-            }}
+            onLogin={signInCouple}
+            onRegister={createCouple}
             onLogout={handleLogout}
+            gameInProgress={gameIsRunning}
+            unlockSyncPending={unlockSyncPending}
             onClose={() => setShowAccountModal(false)}
             onRefreshUnlocked={(cards) => {
               setUnlockedCardIds(cards);
-              try { localStorage.setItem(STORAGE_KEYS.UNLOCKED_CARDS, JSON.stringify(cards)); } catch {}
+              setUnlockSyncPending(false);
             }}
           />
         )}
       </AnimatePresence>
+
+      {resumeNotice && (
+        <div role="status" className="resume-notice pointer-events-none fixed inset-x-0 top-5 z-[60] flex justify-center px-4">
+          <span className="rounded-full border border-emerald-400/35 bg-emerald-950/95 px-4 py-2.5 text-sm font-semibold text-emerald-100 shadow-[0_12px_40px_rgba(0,0,0,.45)]">
+            {resumeNotice}
+          </span>
+        </div>
+      )}
 
       {storageError && (
         <div role="alert" className="fixed bottom-4 left-1/2 z-[90] flex w-[min(92vw,34rem)] -translate-x-1/2 items-center justify-between gap-3 rounded-2xl border border-rose-300/35 bg-[#1a0b11]/95 px-4 py-3 text-xs text-rose-100 shadow-2xl">

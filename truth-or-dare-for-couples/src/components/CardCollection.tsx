@@ -42,10 +42,13 @@ import {
   PositionDifficultyStars,
 } from '../types';
 import { soundEngine } from '../utils/audio';
+import { dialogPanelMotion } from '../utils/motionTokens';
 import { GameCard } from './GameCard';
+import { CardBack } from './game/CardBack';
 import { CARD_ICON_NAMES, autoAssignIcon, getCardIcon } from './CardIcons';
 import { ProgressionConfigModal } from './ProgressionConfigModal';
 import { deriveDifficultyStars, derivePositionDifficultyStars, getCardDeck, getCardTurnAudience, POSITION_DIFFICULTY_STARS } from '../utils/progression';
+import { LEVEL_INFO } from '../data/cards';
 import { compareCollectionCards } from '../utils/cardOrdering';
 import { isCardFrame } from '../utils/cardFrames';
 import type { CatalogSyncStatus } from '../utils/cloudCatalog';
@@ -112,7 +115,7 @@ export interface CardCollectionProps {
 }
 
 type ClothingEffectSelection = 'none' | 'self' | 'opponent' | 'male' | 'female' | 'both' | 'swap';
-type CollectionTab = 'all' | 'truth' | 'dare' | 'favorites' | 'frames' | CardLevel;
+type CollectionTab = 'all' | 'truth' | 'dare' | 'position' | 'favorites' | 'frames' | CardLevel;
 type StageSelection = 'any' | OutfitStage;
 type CardTimerMode = 'inherit' | 'disabled' | 'custom';
 
@@ -120,33 +123,52 @@ const CARD_TIMER_PRESETS = [10, 15, 30, 45, 60] as const;
 const DEFAULT_CARD_TIMER_SECONDS = 60;
 const MAX_CARD_TIMER_SECONDS = 3600;
 
+/**
+ * Regular Position cards use 6–9★; 10★ is reserved for Have Sex (the final
+ * three-card choice). Keeps a valid current choice, otherwise the middle 7★.
+ * (The editor used to fall back to legacy 1–5 values here, which were saved as
+ * 8★/10★ — every Blow card created that way became an undrawable 10★ card.)
+ */
+const regularPositionStars = (current: number): PositionDifficultyStars =>
+  (current >= 6 && current <= 9 ? current : 7) as PositionDifficultyStars;
+
+/** Locked cards are shown a page at a time: there can be hundreds of them. */
+const LOCKED_PAGE_SIZE = 24;
+
+const getUnlockHint = (card: CardItem): string => {
+  if (card.position?.family === 'have_sex') return 'Chọn làm lá cuối của một ván';
+  if (getCardDeck(card) === 'position') return 'Hoàn thành trong Bộ Tư thế';
+  return `Hoàn thành khi chơi mức ${LEVEL_INFO[card.level].name}`;
+};
+
 interface LockedCollectionCardProps {
+  card: CardItem;
   position: number;
 }
 
-const LockedCollectionCard: React.FC<LockedCollectionCardProps> = ({ position }) => (
-  <div
-    role="img"
-    aria-label={`Lá bài bí mật số ${position}, chưa mở khóa. Hoàn thành lá bài này trong ván chơi để mở khóa.`}
-    className="group relative min-h-[180px] overflow-hidden rounded-[1.35rem] border border-white/10 bg-neutral-950/75 p-3 shadow-[0_18px_40px_rgba(0,0,0,0.2)] transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-rose-300/30 hover:shadow-[0_20px_45px_rgba(244,63,94,0.12)] motion-reduce:transform-none motion-reduce:transition-none"
-  >
-    <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_38%,rgba(244,114,182,0.12),transparent_42%)] opacity-70" />
-    <div className="relative flex h-full min-h-[154px] flex-col items-center justify-center text-center">
-      <span className="absolute left-2.5 top-2.5 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
-        <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Bí mật
-      </span>
-      <span
-        aria-hidden="true"
-        className="font-serif-romantic text-6xl font-bold leading-none text-rose-200/70 drop-shadow-[0_0_18px_rgba(251,113,133,0.25)] transition-transform duration-200 group-hover:scale-105 motion-reduce:transform-none motion-reduce:transition-none"
-      >
-        ?
-      </span>
-      <p className="mt-3 max-w-[13rem] text-[10px] leading-relaxed text-neutral-500">
-        Hoàn thành trong ván chơi để mở khóa
-      </p>
+/** A card not opened yet: its kind, its stars and how to open it, never its text. */
+const LockedCollectionCard: React.FC<LockedCollectionCardProps> = ({ card, position }) => {
+  const isPosition = getCardDeck(card) === 'position';
+  const kind = isPosition ? 'Tư thế' : card.type === 'truth' ? 'Sự thật' : 'Thử thách';
+  const stars = isPosition ? derivePositionDifficultyStars(card) : deriveDifficultyStars(card);
+  const hint = getUnlockHint(card);
+  return (
+    <div
+      role="img"
+      aria-label={`Lá chưa mở số ${position}: ${kind}, ${stars} sao. ${hint}.`}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 auto 340px' }}
+      className="card-ratio"
+    >
+      <CardBack
+        kind={isPosition ? 'position' : 'standard'}
+        locked
+        label={`${kind} · ${stars}★`}
+        seal={<LockKeyhole />}
+        footer={<span className="card-back__hint">{hint}</span>}
+      />
     </div>
-  </div>
-);
+  );
+};
 
 type IconPalette = 'standard' | 'position' | 'mythic';
 
@@ -545,6 +567,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
     Boolean(onDeleteCard) && canAuthor && card.position?.family !== 'have_sex';
   const frameCount = isDeveloper ? cards.filter(isCardFrame).length : 0;
   const [showHiddenCards, setShowHiddenCards] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [confirmDeckReset, setConfirmDeckReset] = useState(false);
   const unlockedCardIdSet = useMemo(
     () => new Set(
@@ -579,12 +602,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
       ) {
         return false;
       }
+      const isPosition = getCardDeck(card) === 'position';
       if (activeTab === 'all') return true;
-      if (activeTab === 'truth') return card.type === 'truth';
-      if (activeTab === 'dare') return card.type === 'dare';
+      if (activeTab === 'position') return isPosition;
       if (activeTab === 'favorites') return visibleFavorites.includes(card.id);
       if (activeTab === 'frames') return isCardFrame(card);
-      return card.level === activeTab;
+      // Position cards have their own tab, so they never mix with the game's Truths and Dares.
+      if (activeTab === 'truth' || activeTab === 'dare') return !isPosition && card.type === activeTab;
+      return !isPosition && card.level === activeTab;
     })
     .filter((card) => deckFilter === 'all' || getCardDeck(card) === deckFilter)
     .filter((card) => starFilter === 'all' || (
@@ -599,6 +624,23 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         : getCardTurnAudience(card) === audienceFilter;
     })
     .sort(compareCollectionCards);
+  const isOpenCard = (card: CardItem) => isDeveloper || unlockedCardIdSet.has(card.id);
+  const openCards = filteredCards.filter(isOpenCard);
+  const lockedCards = filteredCards.filter((card) => !isOpenCard(card));
+  const [lockedLimit, setLockedLimit] = useState(LOCKED_PAGE_SIZE);
+  const searchBox = (
+    <div className="relative">
+      <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-300" aria-hidden="true" />
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(event) => setSearchQuery(event.target.value)}
+        aria-label="Tìm kiếm trong bộ sưu tập"
+        placeholder={isDeveloper ? 'Tìm nội dung câu hỏi hoặc thử thách…' : 'Tìm trong các lá đã mở…'}
+        className="input-shimmer input-focus-glow min-h-11 w-full rounded-full border border-white/15 bg-neutral-900/90 pl-10 pr-4 text-sm text-white transition-all duration-300 focus:border-amber-400 focus:outline-none"
+      />
+    </div>
+  );
 
   const loadImageFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -900,7 +942,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             turnAudience: customPositionRecipient,
             orderGroup: customPositionFamily === 'have_sex' ? 4 : customPositionOrder,
             rarity: customPositionFamily === 'have_sex' ? 'mythic' : customPositionRarity,
-            difficultyStars: customStars,
+            difficultyStars: customPositionFamily === 'have_sex' ? customStars : regularPositionStars(customStars),
             luxuryGain: customDeck === 'position' && customGainEnabled ? parsedCustomGain : undefined,
           }
         : null,
@@ -1031,7 +1073,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
         </button>
 
         <h2 className="font-serif-romantic text-lg sm:text-3xl text-center font-bold text-gold-gradient leading-tight">
-          Bộ Sưu Tập Bài Tình Yêu
+          Bộ sưu tập
         </h2>
 
         <div className="flex items-center justify-end gap-2">
@@ -1063,7 +1105,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           )}
 
           {isDeveloper && (
-            <span className="hidden items-center gap-1 rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-200 sm:flex" aria-label="Khu vực quản trị nội dung">
+            <span className="hidden items-center gap-1 rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-xs font-semibold text-amber-200 sm:flex" aria-label="Khu vực quản trị nội dung">
               <Code2 className="h-3 w-3" aria-hidden="true" /> Admin
             </span>
           )}
@@ -1117,14 +1159,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   <strong className="text-neutral-100">
                     {catalogSync.mode === 'cloud' ? 'Cloud đã kết nối' : catalogSync.mode === 'loading' ? 'Đang kết nối' : 'Dữ liệu chưa đồng bộ'}
                   </strong>
-                  <span className="font-mono text-[10px] text-neutral-500">revision {catalogSync.datasetRevision}</span>
+                  <span className="font-mono text-xs text-neutral-400">revision {catalogSync.datasetRevision}</span>
                   {catalogSync.lastBackupAt && (
-                    <span className="text-[10px] text-neutral-500">
+                    <span className="text-xs text-neutral-400">
                       Backup gần nhất {new Date(catalogSync.lastBackupAt).toLocaleString('vi-VN')}
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-neutral-400" aria-live="polite">
+                <p className="mt-1 text-xs leading-relaxed text-neutral-400" aria-live="polite">
                   {backupMessage || catalogSync.message || 'Catalog, ảnh và cấu hình Developer được lưu trên Cloudflare.'}
                 </p>
               </div>
@@ -1135,7 +1177,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 type="button"
                 disabled={backupBusy || !onExportCatalog}
                 onClick={() => onExportCatalog && void runBackupAction(onExportCatalog)}
-                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-[11px] font-semibold text-neutral-200 transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-xs font-semibold text-neutral-200 transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Download className="h-4 w-4" aria-hidden="true" /> Xuất
               </button>
@@ -1143,7 +1185,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 type="button"
                 disabled={backupBusy || !onImportCatalog}
                 onClick={() => backupInputRef.current?.click()}
-                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-[11px] font-semibold text-neutral-200 transition-colors hover:border-amber-200/30 hover:bg-amber-200/10 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-xs font-semibold text-neutral-200 transition-colors hover:border-amber-200/30 hover:bg-amber-200/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Upload className="h-4 w-4" aria-hidden="true" /> Nhập
               </button>
@@ -1151,7 +1193,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 type="button"
                 disabled={backupBusy || catalogSync.mode !== 'cloud' || !onCreateCloudBackup}
                 onClick={() => onCreateCloudBackup && void runBackupAction(onCreateCloudBackup)}
-                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-[11px] font-semibold text-neutral-200 transition-colors hover:border-violet-200/30 hover:bg-violet-200/10 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 text-xs font-semibold text-neutral-200 transition-colors hover:border-violet-200/30 hover:bg-violet-200/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <DatabaseBackup className="h-4 w-4" aria-hidden="true" /> Snapshot
               </button>
@@ -1169,15 +1211,15 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             <div className="mt-3 grid grid-cols-3 divide-x divide-white/10 border-t border-white/8 pt-3 text-center" aria-label="Thống kê người chơi">
               <div>
                 <strong className="block text-lg font-semibold text-emerald-300">{playerStats.online}</strong>
-                <span className="text-[10px] uppercase tracking-[0.12em] text-neutral-500">Đang online</span>
+                <span className="text-xs text-neutral-400">Đang online</span>
               </div>
               <div>
                 <strong className="block text-lg font-semibold text-rose-200">{playerStats.activeToday}</strong>
-                <span className="text-[10px] uppercase tracking-[0.12em] text-neutral-500">Trong 24 giờ</span>
+                <span className="text-xs text-neutral-400">Trong 24 giờ</span>
               </div>
               <div>
                 <strong className="block text-lg font-semibold text-neutral-100">{playerStats.total}</strong>
-                <span className="text-[10px] uppercase tracking-[0.12em] text-neutral-500">Tổng người chơi</span>
+                <span className="text-xs text-neutral-400">Tổng người chơi</span>
               </div>
             </div>
           )}
@@ -1192,11 +1234,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h3 className="text-sm font-semibold text-rose-100">Bộ thẻ của {coupleName || 'tài khoản'}</h3>
-              <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-400">
+              <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">
                 {accountDeck.ownCardIds.length} thẻ tự thêm · {accountDeck.hiddenCards.length} thẻ đã xóa khỏi bộ. Thay đổi chỉ áp dụng cho tài khoản này.
               </p>
               {accountDeck.statusMessage && (
-                <p className="mt-1 text-[11px] text-amber-200" aria-live="polite">{accountDeck.statusMessage}</p>
+                <p className="mt-1 text-xs text-amber-200" aria-live="polite">{accountDeck.statusMessage}</p>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1221,11 +1263,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 </button>
               ) : (
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-red-400/30 bg-neutral-950/80 px-3 py-2" role="alertdialog" aria-label="Xác nhận khôi phục bộ thẻ">
-                  <span className="text-[11px] text-neutral-300">Xóa thẻ tự thêm và hiện lại thẻ đã xóa? Tiến trình đã mở được giữ nguyên.</span>
+                  <span className="text-xs text-neutral-300">Xóa thẻ tự thêm và hiện lại thẻ đã xóa? Tiến trình đã mở được giữ nguyên.</span>
                   <button
                     type="button"
                     onClick={() => setConfirmDeckReset(false)}
-                    className="min-h-9 rounded-full border border-neutral-700 px-3 text-[11px] font-semibold text-neutral-300"
+                    className="min-h-9 rounded-full border border-neutral-700 px-3 text-xs font-semibold text-neutral-300"
                   >
                     Giữ lại
                   </button>
@@ -1236,7 +1278,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       setShowHiddenCards(false);
                       accountDeck.onResetToDefault();
                     }}
-                    className="min-h-9 rounded-full bg-red-500/90 px-3 text-[11px] font-bold text-white"
+                    className="min-h-9 rounded-full bg-red-500/90 px-3 text-xs font-bold text-white"
                   >
                     Khôi phục
                   </button>
@@ -1248,13 +1290,13 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto border-t border-white/10 pt-3" aria-label="Thẻ đã xóa khỏi bộ">
               {accountDeck.hiddenCards.map((card) => (
                 <li key={card.id} className="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
-                  <span className="min-w-0 truncate text-[11px] text-neutral-300">
+                  <span className="min-w-0 truncate text-xs text-neutral-300">
                     {unlockedCardIdSet.has(card.id) ? card.content : 'Lá chưa mở khóa'}
                   </span>
                   <button
                     type="button"
                     onClick={() => accountDeck.onRestoreCard(card.id)}
-                    className="min-h-9 shrink-0 rounded-full border border-emerald-300/30 px-3 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-300/10"
+                    className="min-h-9 shrink-0 rounded-full border border-emerald-300/30 px-3 text-xs font-semibold text-emerald-200 hover:bg-emerald-300/10"
                   >
                     Khôi phục
                   </button>
@@ -1266,19 +1308,20 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
       )}
 
       {!embedded && (
+      <div className={`mb-5 w-full ${isDeveloper || unlockedCount > 0 ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end lg:gap-10' : ''}`}>
       <section
         aria-labelledby="collection-progress-title"
-        className="mx-auto mb-6 w-full max-w-2xl border-b border-white/10 pb-5"
+        className="mx-auto w-full max-w-2xl lg:mx-0 lg:max-w-none"
       >
         <div className="mb-2 flex items-end justify-between gap-4">
           <div>
             <h3 id="collection-progress-title" className="text-sm font-semibold text-neutral-100">
               Tiến độ mở khóa
             </h3>
-            <p className="mt-0.5 text-[11px] text-neutral-500">
+            <p className="mt-0.5 text-sm text-neutral-300">
               {isDeveloper
-                ? 'Developer thấy toàn bộ; tiến độ vẫn ghi nhận các lá đã hoàn thành.'
-                : 'Hoàn thành thành công một lá trong ván chơi để nhìn thấy nội dung.'}
+                ? 'Admin thấy toàn bộ; tiến độ vẫn ghi nhận các lá đã hoàn thành.'
+                : 'Hoàn thành một lá trong ván chơi để mở nội dung của lá đó.'}
             </p>
           </div>
           <p className="shrink-0 text-sm font-semibold text-rose-200" aria-live="polite">
@@ -1300,29 +1343,32 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
           />
         </div>
       </section>
+      {(isDeveloper || unlockedCount > 0) && <div className="mx-auto mt-4 w-full max-w-md lg:mx-0 lg:mt-0 lg:max-w-none">{searchBox}</div>}
+      </div>
+      )}
+
+      {!isDeveloper && unlockedCount === 0 && (
+        <section className="mx-auto mb-6 w-full max-w-xl rounded-2xl border border-rose-300/20 bg-rose-950/25 p-5 text-center">
+          <p className="text-2xl" aria-hidden="true">💌</p>
+          <h3 className="mt-2 font-serif-romantic text-lg font-bold text-rose-50">Bộ sưu tập đang chờ hai bạn</h3>
+          <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-neutral-200">
+            Mỗi lá hoàn thành trong ván chơi sẽ được lưu ở đây để hai bạn xem lại.
+            Còn <strong className="text-rose-200">{cards.length}</strong> lá đang chờ được mở.
+          </p>
+        </section>
       )}
 
       {/* Search Bar & Filter Tabs */}
+      {(isDeveloper || unlockedCount > 0) && (
       <div className="space-y-4 mb-6">
-        <div className="relative w-full max-w-md mx-auto">
-          <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Tìm kiếm trong bộ sưu tập"
-            placeholder={isDeveloper
-              ? 'Tìm kiếm nội dung câu hỏi hoặc thử thách...'
-              : 'Tìm trong các lá bài đã mở khóa...'}
-            className="input-shimmer input-focus-glow w-full bg-neutral-900/90 border border-neutral-700/60 focus:border-amber-400 focus:outline-none rounded-full pl-10 pr-4 py-2 text-xs sm:text-sm text-white transition-all duration-300"
-          />
-        </div>
+        {embedded && <div className="mx-auto w-full max-w-md">{searchBox}</div>}
 
         <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
           {[
             { id: 'all', label: 'Tất cả' },
-            { id: 'truth', label: '🔍 Sự Thật' },
-            { id: 'dare', label: '⚡ Thử Thách' },
+            { id: 'truth', label: '💬 Sự thật' },
+            { id: 'dare', label: '⚡ Thử thách' },
+            { id: 'position', label: '✦ Tư thế' },
             { id: 'gentle', label: '🌸 Nhẹ nhàng' },
             { id: 'intimate', label: '🔥 Thân mật' },
             { id: 'passionate', label: '💋 Nồng nhiệt' },
@@ -1336,48 +1382,66 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
               onClick={() => {
                 soundEngine.playTick();
                 setActiveTab(tab.id as CollectionTab);
+                setLockedLimit(LOCKED_PAGE_SIZE);
               }}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 motion-reduce:transition-none ${
+              className={`min-h-9 cursor-pointer rounded-full border px-3.5 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 motion-reduce:transition-none ${
                 activeTab === tab.id
-                  ? 'bg-amber-400 text-neutral-950 font-bold shadow-md'
-                  : 'bg-neutral-900/60 text-neutral-300 hover:text-white border border-neutral-800'
+                  ? 'border-amber-300 bg-amber-300 font-bold text-neutral-950'
+                  : 'border-white/15 bg-neutral-900/60 font-medium text-neutral-200 hover:border-white/35 hover:text-white'
               }`}
             >
               {tab.label}
             </button>
           ))}
+        {!isDeveloper && (
+            <button
+              type="button"
+              aria-expanded={showAdvancedFilters}
+              onClick={() => setShowAdvancedFilters((open) => !open)}
+              className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[0.8125rem] font-semibold text-amber-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+              {showAdvancedFilters ? 'Ẩn bộ lọc' : 'Lọc theo số sao, lượt rút'}
+              {(starFilter !== 'all' ? 1 : 0) + (audienceFilter !== 'all' ? 1 : 0) > 0 && (
+                <span className="rounded-full bg-amber-300 px-1.5 text-xs font-bold text-neutral-950">{(starFilter !== 'all' ? 1 : 0) + (audienceFilter !== 'all' ? 1 : 0)}</span>
+              )}
+            </button>
+        )}
         </div>
 
-        <div className="mx-auto grid w-full max-w-2xl grid-cols-3 gap-2">
-          <label className="text-[10px] text-neutral-500">
+        {(isDeveloper || showAdvancedFilters) && (
+        <div className={`mx-auto grid w-full max-w-2xl gap-2 ${isDeveloper ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {isDeveloper && (
+          <label className="text-xs text-neutral-300">
             Bộ bài
             <select
               value={deckFilter}
               onChange={(event) => setDeckFilter(event.target.value as 'all' | CardDeck)}
-              className="mt-1 min-h-10 w-full rounded-xl border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-200 outline-none focus:border-amber-300/50"
+              className="mt-1 min-h-10 w-full rounded-xl border border-white/15 bg-neutral-950 px-2 text-sm text-neutral-100 outline-none focus:border-amber-300/50"
             >
               <option value="all">Tất cả</option>
               <option value="standard">Bài thường</option>
               <option value="position">Tư thế</option>
             </select>
           </label>
-          <label className="text-[10px] text-neutral-500">
+          )}
+          <label className="text-xs text-neutral-300">
             Độ khó
             <select
               value={starFilter}
               onChange={(event) => setStarFilter(event.target.value === 'all' ? 'all' : Number(event.target.value) as PositionDifficultyStars)}
-              className="mt-1 min-h-10 w-full rounded-xl border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-200 outline-none focus:border-amber-300/50"
+              className="mt-1 min-h-10 w-full rounded-xl border border-white/15 bg-neutral-950 px-2 text-sm text-neutral-100 outline-none focus:border-amber-300/50"
             >
               <option value="all">Mọi sao</option>
               {POSITION_DIFFICULTY_STARS.map((star) => <option key={star} value={star}>{star}★</option>)}
             </select>
           </label>
-          <label className="text-[10px] text-neutral-500">
+          <label className="text-xs text-neutral-300">
             Lượt được phép rút
             <select
               value={audienceFilter}
               onChange={(event) => setAudienceFilter(event.target.value as 'all' | TurnAudience)}
-              className="mt-1 min-h-10 w-full rounded-xl border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-200 outline-none focus:border-amber-300/50"
+              className="mt-1 min-h-10 w-full rounded-xl border border-white/15 bg-neutral-950 px-2 text-sm text-neutral-100 outline-none focus:border-amber-300/50"
             >
               <option value="all">Tất cả</option>
               <option value="male">Nam</option>
@@ -1386,32 +1450,37 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             </select>
           </label>
         </div>
+        )}
       </div>
+      )}
 
       {/* CARD GRID */}
       {filteredCards.length === 0 ? (
-        <div className="my-auto py-16 text-center text-neutral-400 font-light">
-          <p className="text-base mb-2">Chưa tìm thấy lá bài phù hợp nào.</p>
-          <p className="text-xs text-neutral-500">
-            Thử thay đổi từ khóa tìm kiếm hoặc chọn bộ lọc khác.
+        <div className="my-auto py-16 text-center text-neutral-200">
+          <p className="mb-2 text-base">Chưa tìm thấy lá bài phù hợp.</p>
+          <p className="text-sm text-neutral-300">
+            Thử từ khóa khác hoặc bỏ bớt bộ lọc.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-          {filteredCards.map((card, index) => {
-            const isUnlocked = unlockedCardIdSet.has(card.id);
-            if (!isDeveloper && !isUnlocked) {
-              return <LockedCollectionCard key={card.id} position={index + 1} />;
-            }
-
-            return (
+        <>
+        {openCards.length > 0 && (
+        <section className="@container mb-8" aria-label={isDeveloper ? 'Danh sách lá bài' : 'Lá đã mở'}>
+          {!isDeveloper && lockedCards.length > 0 && (
+            <h3 className="mb-3 text-base font-semibold text-neutral-100">Đã mở <span className="tabular-nums text-rose-200">{openCards.length}</span></h3>
+          )}
+          <div className="grid grid-cols-2 gap-4 @xl:grid-cols-3 @4xl:grid-cols-4">
+            {openCards.map((card) => (
               <div
                 key={card.id}
-                className="relative"
-                style={{ contentVisibility: 'auto', containIntrinsicSize: '0 300px' }}
+                className={`collection-cell relative ${isDeveloper ? 'pt-3' : ''}`}
+                style={{ contentVisibility: 'auto', containIntrinsicSize: '0 auto 340px' }}
               >
                 {isDeveloper && isCardFrame(card) && (
-                  <p className="mb-1.5 text-center text-[9px] font-bold uppercase tracking-wide text-sky-300">
+                  // Floats over the card's top edge, inside the padding every admin
+                  // cell has, so frame cards keep the same size and alignment as every
+                  // other card in the row (the cell clips anything outside it).
+                  <p className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-sky-400/40 bg-[#0b1220] px-2 py-0.5 text-xs font-semibold text-sky-200">
                     ▢ Khung · chưa vào game
                   </p>
                 )}
@@ -1426,9 +1495,31 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   }}
                 />
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        </section>
+        )}
+
+        {lockedCards.length > 0 && (
+        <section className="@container mb-8" aria-label="Lá chưa mở">
+          <h3 className="mb-3 text-base font-semibold text-neutral-100">Chưa mở <span className="tabular-nums text-neutral-300">{lockedCards.length}</span></h3>
+          <div className="grid grid-cols-2 gap-4 @xl:grid-cols-3 @4xl:grid-cols-4">
+            {lockedCards.slice(0, lockedLimit).map((card, index) => (
+              <LockedCollectionCard key={card.id} card={card} position={index + 1} />
+            ))}
+          </div>
+          {lockedCards.length > lockedLimit && (
+            <button
+              type="button"
+              onClick={() => setLockedLimit((limit) => limit + LOCKED_PAGE_SIZE * 2)}
+              className="mx-auto mt-5 flex min-h-11 items-center rounded-full border border-white/20 px-5 text-sm font-semibold text-neutral-100 transition-colors hover:border-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+            >
+              Xem thêm {Math.min(LOCKED_PAGE_SIZE * 2, lockedCards.length - lockedLimit)} lá chưa mở
+            </button>
+          )}
+        </section>
+        )}
+        </>
       )}
 
       {/* CARD DETAIL POPUP */}
@@ -1442,11 +1533,8 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             data-card-collection-dialog="true"
           >
             <motion.div
-              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94 }}
-              transition={{ duration: prefersReducedMotion ? 0.12 : 0.2 }}
-              className="relative w-full max-w-sm"
+              {...dialogPanelMotion(Boolean(prefersReducedMotion))}
+              className="relative w-full max-w-[22rem]"
             >
               <button
                 onClick={() => {
@@ -1527,10 +1615,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
             data-card-collection-dialog="true"
           >
             <motion.div
-              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
-              transition={{ duration: prefersReducedMotion ? 0.12 : 0.2 }}
+              {...dialogPanelMotion(Boolean(prefersReducedMotion))}
               className="relative w-full max-w-lg max-h-[calc(100svh-2rem)] overflow-y-auto glass-dark rounded-3xl p-5 sm:p-6 border border-rose-500/40 shadow-2xl"
             >
               <button
@@ -1542,7 +1627,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
               </button>
 
               <h3 id="card-editor-title" className="font-serif-romantic text-2xl font-bold text-gold-gradient mb-1 pr-10">
-                {editingCard ? 'Chỉnh Sửa Lá Bài' : 'Thêm Lá Bài Riêng'}
+                {editingCard ? 'Chỉnh sửa lá bài' : 'Thêm lá bài riêng'}
               </h3>
               <p className="text-xs text-neutral-400 mb-5">
                 {editingCard ? 'Thay đổi nội dung, cấp độ và biểu tượng của lá bài.' : 'Tự viết câu hỏi hoặc thử thách bí mật. Có thể thêm ảnh minh hoạ!'}
@@ -1563,7 +1648,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         setCustomType('dare');
                         setCustomLevel('passionate');
                         if (customPositionFamily !== 'have_sex') {
-                          setCustomStars(customPositionFamily === 'handjob' ? 7 : customPositionFamily === 'blowjob' ? 5 : 3);
+                          setCustomStars(regularPositionStars(customStars));
                         }
                         if (customClothingEffect === 'self' || customClothingEffect === 'opponent') {
                           setCustomClothingEffect(customPositionRecipient);
@@ -1594,8 +1679,8 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       }}
                       className="appearance-none w-full bg-neutral-900 border border-neutral-700 hover:border-rose-500/50 text-xs text-white rounded-xl p-2.5 transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <option value="truth">🔍 Sự Thật</option>
-                      <option value="dare">⚡ Thử Thách</option>
+                      <option value="truth">💬 Sự thật</option>
+                      <option value="dare">⚡ Thử thách</option>
                     </select>
                   </div>
                   <div>
@@ -1617,40 +1702,51 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                 <section className="space-y-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.035] p-3.5" aria-labelledby="card-progression-title">
                   <div>
                     <h4 id="card-progression-title" className="text-xs font-semibold text-amber-100">Tiến triển thân mật</h4>
-                    <p className="mt-0.5 text-[10px] text-neutral-500">Sao quyết định tỉ lệ xuất hiện và điểm mặc định.</p>
+                    <p className="mt-0.5 text-xs text-neutral-400">Sao quyết định tỉ lệ xuất hiện và điểm mặc định.</p>
                   </div>
                   <div>
-                    <span className="text-[10px] text-neutral-400">Độ khó</span>
+                    <span className="text-xs text-neutral-400">Độ khó</span>
                     <div className={`mt-1.5 grid grid-cols-5 gap-1.5 ${customDeck === 'position' ? 'sm:grid-cols-10' : ''}`}>
-                      {(customDeck === 'position' ? POSITION_DIFFICULTY_STARS : ([1, 2, 3, 4, 5] as DifficultyStars[])).map((star) => (
-                        <button
-                          key={star}
-                          type="button"
-                          aria-pressed={customStars === star}
-                          onClick={() => {
-                            setCustomStars(star);
-                            if (customDeck === 'position') setPositionTouched(true);
-                            else setProgressionTouched(true);
-                          }}
-                          className={`min-h-11 rounded-xl border text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 ${
-                            customStars === star
-                              ? 'border-amber-200/60 bg-amber-200/15 text-amber-100'
-                              : 'border-neutral-700 bg-neutral-950/60 text-neutral-500 hover:text-neutral-200'
-                          }`}
-                        >
-                          {star}★
-                        </button>
-                      ))}
+                      {(customDeck === 'position' ? POSITION_DIFFICULTY_STARS : ([1, 2, 3, 4, 5] as DifficultyStars[])).map((star) => {
+                        // 10★ belongs to Have Sex only: a regular Position card at 10★ is never drawn.
+                        const reservedForFinal = customDeck === 'position' && star === 10 && customPositionFamily !== 'have_sex';
+                        return (
+                          <button
+                            key={star}
+                            type="button"
+                            aria-pressed={customStars === star}
+                            disabled={reservedForFinal}
+                            title={reservedForFinal ? '10★ chỉ dành cho lá Have Sex' : undefined}
+                            onClick={() => {
+                              setCustomStars(star);
+                              if (customDeck === 'position') setPositionTouched(true);
+                              else setProgressionTouched(true);
+                            }}
+                            className={`min-h-11 rounded-xl border text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 disabled:cursor-not-allowed disabled:opacity-30 ${
+                              customStars === star
+                                ? 'border-amber-200/60 bg-amber-200/15 text-amber-100'
+                                : 'border-neutral-700 bg-neutral-950/60 text-neutral-400 hover:text-neutral-200'
+                            }`}
+                          >
+                            {star}★
+                          </button>
+                        );
+                      })}
                     </div>
                     {customDeck === 'position' && customPositionFamily === 'have_sex' && (
-                      <p className="mt-2 text-[9px] leading-relaxed text-amber-100/65">
-                        Có thể chọn tự do từ 1–10★. Lá Have sex vẫn kết thúc ván theo nhóm thẻ, không phụ thuộc số sao.
+                      <p className="mt-2 text-xs leading-relaxed text-amber-100/90">
+                        Có thể chọn tự do từ 1–10★. Lá Have Sex vẫn kết thúc ván theo nhóm thẻ, không phụ thuộc số sao.
+                      </p>
+                    )}
+                    {customDeck === 'position' && customPositionFamily !== 'have_sex' && (
+                      <p className="mt-2 text-xs leading-relaxed text-neutral-400">
+                        Lá Tư thế thường dùng 6–9★: 6★ ra đầu chặng, 9★ ra cuối chặng. 10★ dành riêng cho Have Sex.
                       </p>
                     )}
                   </div>
 
                   {customDeck === 'standard' ? (
-                    <label className="block text-[10px] text-neutral-400">
+                    <label className="block text-xs text-neutral-400">
                       Lượt được phép rút
                       <select
                         value={customAudience}
@@ -1661,13 +1757,13 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         <option value="male">Nam</option>
                         <option value="female">Nữ</option>
                       </select>
-                      <span className="mt-1.5 block text-[9px] leading-relaxed text-neutral-500">
+                      <span className="mt-1.5 block text-xs leading-relaxed text-neutral-400">
                         Chỉ quyết định lượt nào có thể rút. Người rút luôn là người được tính kết quả.
                       </span>
                     </label>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
-                      <label className="text-[10px] text-neutral-400">
+                      <label className="text-xs text-neutral-400">
                         Nhóm Tư thế
                         <select
                           value={customPositionFamily}
@@ -1677,7 +1773,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           setCustomPositionOrder(family === 'oral' ? 1 : family === 'blowjob' ? 2 : family === 'handjob' ? 3 : family === 'have_sex' ? 4 : 1);
                           setCustomPositionRarity(family === 'have_sex' ? 'mythic' : 'luxury');
                           if (family !== 'have_sex') {
-                            setCustomStars(family === 'handjob' ? 7 : family === 'blowjob' ? 5 : 3);
+                            setCustomStars(regularPositionStars(customStars));
                           }
                             if (family === 'have_sex') {
                               setCustomClothingEffect('none');
@@ -1694,7 +1790,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           <option value="other">Khác / Tùy chỉnh…</option>
                         </select>
                       </label>
-                      <label className="text-[10px] text-neutral-400">
+                      <label className="text-xs text-neutral-400">
                         Lượt được phép rút
                         <select
                           value={customPositionRecipient}
@@ -1707,7 +1803,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         </select>
                       </label>
                       {customPositionFamily === 'other' && (
-                        <label className="col-span-2 text-[10px] text-neutral-400">
+                        <label className="col-span-2 text-xs text-neutral-400">
                           Tên dạng Tư thế
                           <input
                             type="text"
@@ -1719,7 +1815,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           />
                         </label>
                       )}
-                      <label className="text-[10px] text-neutral-400">
+                      <label className="text-xs text-neutral-400">
                         Thứ tự nhóm
                         <select
                           disabled={customPositionFamily === 'have_sex'}
@@ -1733,7 +1829,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           <option value={4}>4 · Cuối</option>
                         </select>
                       </label>
-                      <label className="text-[10px] text-neutral-400">
+                      <label className="text-xs text-neutral-400">
                         Độ hiếm
                         <select
                           disabled={customPositionFamily === 'have_sex'}
@@ -1749,7 +1845,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   )}
 
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="text-[10px] text-neutral-400">
+                    <label className="text-xs text-neutral-400">
                       Đồ người đang lượt
                       <select
                         value={customActorStage}
@@ -1762,7 +1858,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         <option value="empty">Hết đồ</option>
                       </select>
                     </label>
-                    <label className="text-[10px] text-neutral-400">
+                    <label className="text-xs text-neutral-400">
                       Đồ đối phương
                       <select
                         value={customPartnerStage}
@@ -1792,7 +1888,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       <span className={`absolute top-1/2 h-7 w-7 -translate-y-1/2 rounded-full bg-white transition-[left] motion-reduce:transition-none ${customGainEnabled ? 'left-[34px]' : 'left-1'}`} />
                       <span className="sr-only">Dùng điểm {customDeck === 'position' ? 'Luxury' : 'thân mật'} riêng</span>
                     </button>
-                    <label className="flex-1 text-[10px] text-neutral-400">
+                    <label className="flex-1 text-xs text-neutral-400">
                       Điểm {customDeck === 'position' ? 'Luxury' : 'thân mật'} riêng
                       <div className="relative mt-1">
                         <input
@@ -1808,11 +1904,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           }}
                           className="min-h-11 w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 pr-9 text-xs text-white outline-none disabled:opacity-40"
                         />
-                        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-600">%</span>
+                        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-400">%</span>
                       </div>
                     </label>
                   </div>
-                  {!hasValidCustomGain && <p role="alert" className="text-[10px] text-rose-300">Điểm riêng phải nằm trong 0–100%.</p>}
+                  {!hasValidCustomGain && <p role="alert" className="text-xs text-rose-300">Điểm riêng phải nằm trong 0–100%.</p>}
                 </section>
 
                 {/* Content */}
@@ -1859,7 +1955,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                     )}
                     <option value="swap">Hai người đổi 1 món cho nhau</option>
                   </select>
-                  <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
+                  <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
                     {customDeck === 'position' && customPositionFamily === 'have_sex'
                       ? 'Lá Have Sex chỉ kết thúc ván sau khi xem; không được gắn tác động trang phục.'
                       : 'Khi hoàn thành thẻ, trò chơi sẽ mở bước chọn và xác nhận món đồ phù hợp.'}
@@ -1871,7 +1967,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         setCustomClothingEffect(suggestedClothingEffect);
                         setClothingEffectTouched(true);
                       }}
-                      className="mt-2 min-h-11 w-full rounded-xl border border-amber-300/25 bg-amber-300/[0.06] px-3 text-left text-[10px] font-semibold text-amber-100 transition hover:border-amber-200/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50"
+                      className="mt-2 min-h-11 w-full rounded-xl border border-amber-300/25 bg-amber-300/[0.06] px-3 text-left text-xs font-semibold text-amber-100 transition hover:border-amber-200/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50"
                     >
                       Gợi ý từ nội dung: áp dụng “{suggestedClothingEffect === 'swap'
                         ? 'Hai người đổi đồ'
@@ -1900,7 +1996,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       </span>
                       <div>
                         <p id="card-timer-label" className="text-xs font-semibold text-neutral-100">Thời gian đếm ngược</p>
-                        <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                        <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">
                           Áp dụng cho cả Sự thật, Hành động và bài Tư thế.
                         </p>
                       </div>
@@ -1928,7 +2024,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                               setCustomTimerSeconds(String(DEFAULT_CARD_TIMER_SECONDS));
                             }
                           }}
-                          className={`min-h-11 rounded-xl border px-2 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${customTimerMode === mode ? 'border-amber-200/60 bg-amber-200/15 text-amber-100' : 'border-neutral-700 bg-neutral-950/55 text-neutral-400 hover:text-white'}`}
+                          className={`min-h-11 rounded-xl border px-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${customTimerMode === mode ? 'border-amber-200/60 bg-amber-200/15 text-amber-100' : 'border-neutral-700 bg-neutral-950/55 text-neutral-400 hover:text-white'}`}
                         >
                           {label}
                         </button>
@@ -1948,7 +2044,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         >
                           <div className="space-y-3 p-3.5">
                             <div>
-                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-100/70">
+                              <p className="mb-2 text-xs font-semibold text-amber-100/90">
                                 Chọn nhanh
                               </p>
                               <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
@@ -1977,7 +2073,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                             </div>
 
                             <div>
-                              <label htmlFor="card-timer-seconds" className="mb-1.5 block text-[11px] text-neutral-300">
+                              <label htmlFor="card-timer-seconds" className="mb-1.5 block text-xs text-neutral-300">
                                 Số giây tùy chỉnh
                               </label>
                               <div className="relative">
@@ -2002,15 +2098,15 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                                       : 'border-rose-400/70 focus:border-rose-300'
                                   }`}
                                 />
-                                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] text-neutral-500">
+                                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-neutral-400">
                                   giây
                                 </span>
                               </div>
                               <p
                                 id="card-timer-help"
                                 role={!hasValidCustomTimer ? 'alert' : undefined}
-                                className={`mt-1.5 text-[10px] leading-relaxed ${
-                                  hasValidCustomTimer ? 'text-neutral-500' : 'text-rose-300'
+                                className={`mt-1.5 text-xs leading-relaxed ${
+                                  hasValidCustomTimer ? 'text-neutral-400' : 'text-rose-300'
                                 }`}
                               >
                                 {hasValidCustomTimer
@@ -2043,7 +2139,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   <div>
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <label className="text-xs text-neutral-300">Biểu tượng trên thẻ</label>
-                      <span className="text-[10px] text-neutral-500">{CARD_ICON_NAMES.length} lựa chọn</span>
+                      <span className="text-xs text-neutral-400">{CARD_ICON_NAMES.length} lựa chọn</span>
                     </div>
                     <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-40 overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950/60 p-2">
                       {CARD_ICON_NAMES.map((iconName) => {
@@ -2076,7 +2172,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                     </span>
                     <div>
                       <h4 id="card-appearance-title" className="text-xs font-semibold text-neutral-100">Bố cục hiển thị</h4>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">Chỉnh kích thước và khoảng cách giữa icon với nội dung.</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">Chỉnh kích thước và khoảng cách giữa icon với nội dung.</p>
                     </div>
                   </div>
 
@@ -2102,7 +2198,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         Xem trước nội dung lá bài
                       </p>
                       <p
-                        className="mt-1 italic text-rose-300/75 transition-[font-size] duration-200 motion-reduce:transition-none"
+                        className="mt-1 italic text-rose-200 transition-[font-size] duration-200 motion-reduce:transition-none"
                         style={{ fontSize: `${9 * cardTextScale}px` }}
                       >
                         Nhãn, gợi ý và thời gian cũng đổi theo.
@@ -2113,7 +2209,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
                       <ZoomIn className="h-3.5 w-3.5 shrink-0 text-violet-200" aria-hidden="true" />
-                      <label htmlFor="card-icon-scale" className="w-20 shrink-0 text-[10px] text-neutral-400">Icon</label>
+                      <label htmlFor="card-icon-scale" className="w-20 shrink-0 text-xs text-neutral-400">Icon</label>
                       <input
                         id="card-icon-scale"
                         type="range"
@@ -2124,11 +2220,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         onChange={(event) => setCardIconScale(Number(event.target.value) / 100)}
                         className="h-1 flex-1 accent-violet-400"
                       />
-                      <output htmlFor="card-icon-scale" className="w-10 text-right text-[10px] tabular-nums text-neutral-400">{Math.round(cardIconScale * 100)}%</output>
+                      <output htmlFor="card-icon-scale" className="w-10 text-right text-xs tabular-nums text-neutral-400">{Math.round(cardIconScale * 100)}%</output>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="w-3.5 shrink-0 text-center text-xs font-serif text-violet-200" aria-hidden="true">Aa</span>
-                      <label htmlFor="card-text-scale" className="w-20 shrink-0 text-[10px] text-neutral-400">Tất cả chữ</label>
+                      <label htmlFor="card-text-scale" className="w-20 shrink-0 text-xs text-neutral-400">Tất cả chữ</label>
                       <input
                         id="card-text-scale"
                         type="range"
@@ -2139,11 +2235,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         onChange={(event) => setCardTextScale(Number(event.target.value) / 100)}
                         className="h-1 flex-1 accent-violet-400"
                       />
-                      <output htmlFor="card-text-scale" className="w-10 text-right text-[10px] tabular-nums text-neutral-400">{Math.round(cardTextScale * 100)}%</output>
+                      <output htmlFor="card-text-scale" className="w-10 text-right text-xs tabular-nums text-neutral-400">{Math.round(cardTextScale * 100)}%</output>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="w-3.5 shrink-0 text-center text-sm leading-none text-violet-200" aria-hidden="true">↕</span>
-                      <label htmlFor="card-icon-text-gap" className="w-20 shrink-0 text-[10px] text-neutral-400">Icon ↔ chữ</label>
+                      <label htmlFor="card-icon-text-gap" className="w-20 shrink-0 text-xs text-neutral-400">Icon ↔ chữ</label>
                       <input
                         id="card-icon-text-gap"
                         type="range"
@@ -2154,13 +2250,13 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         onChange={(event) => setCardIconTextGap(Number(event.target.value))}
                         className="h-1 flex-1 accent-violet-400"
                       />
-                      <output htmlFor="card-icon-text-gap" className="w-10 text-right text-[10px] tabular-nums text-neutral-400">{cardIconTextGap}px</output>
+                      <output htmlFor="card-icon-text-gap" className="w-10 text-right text-xs tabular-nums text-neutral-400">{cardIconTextGap}px</output>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => { setCardIconScale(1); setCardTextScale(1); setCardIconTextGap(8); }}
-                    className="min-h-11 w-full rounded-xl border border-white/10 bg-white/[0.035] text-[10px] font-semibold text-neutral-400 transition-colors hover:border-violet-200/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200/50"
+                    className="min-h-11 w-full rounded-xl border border-white/10 bg-white/[0.035] text-xs font-semibold text-neutral-400 transition-colors hover:border-violet-200/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200/50"
                   >
                     Khôi phục bố cục mặc định
                   </button>
@@ -2173,7 +2269,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                     Ảnh minh hoạ (không bắt buộc)
                   </label>
                   {editingCard?.customImage && !illustrationTouched && (
-                    <p className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.05] px-3 py-2 text-[9px] leading-relaxed text-emerald-100/70">
+                    <p className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.05] px-3 py-2 text-xs leading-relaxed text-emerald-100/90">
                       Ảnh đã lưu đang được giữ nguyên. Chỉ xử lý lại khi bạn dùng crop, xóa nền, màu hoặc tải ảnh mới.
                     </p>
                   )}
@@ -2190,11 +2286,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       }}
                       className="w-full py-8 flex flex-col items-center justify-center gap-2 bg-neutral-900/60 rounded-xl border border-neutral-700/50 cursor-pointer hover:border-rose-500/40 hover:bg-neutral-900/80 transition-all"
                     >
-                      <Upload className="w-8 h-8 text-neutral-500" />
+                      <Upload className="w-8 h-8 text-neutral-400" />
                       <span className="text-xs text-neutral-400">
                         Bấm để chọn ảnh hoặc kéo thả
                       </span>
-                      <span className="text-[10px] text-neutral-500">
+                      <span className="text-xs text-neutral-400">
                         PNG, JPG, WEBP — Tự crop, xóa nền và đồng bộ màu theo thẻ
                       </span>
                     </div>
@@ -2204,7 +2300,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                       <div className="flex gap-3 items-start">
                         {/* Original */}
                         <div className="flex-1 text-center">
-                          <p className="text-[10px] text-neutral-500 mb-1.5">Ảnh gốc</p>
+                          <p className="text-xs text-neutral-400 mb-1.5">Ảnh gốc</p>
                           <div className="w-full aspect-square rounded-xl overflow-hidden bg-neutral-900 border border-neutral-700/40 flex items-center justify-center">
                             <img
                               src={originalImage}
@@ -2215,11 +2311,11 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         </div>
 
                         {/* Arrow */}
-                        <div className="flex items-center pt-8 text-neutral-500 text-lg">→</div>
+                        <div className="flex items-center pt-8 text-neutral-400 text-lg">→</div>
 
                         {/* Processed (pink/white) */}
                         <div className="flex-1 text-center">
-                          <p className={`mb-1.5 text-[10px] ${imagePreviewToneClass}`}>Icon · {imagePaletteLabel}</p>
+                          <p className={`mb-1.5 text-xs ${imagePreviewToneClass}`}>Icon · {imagePaletteLabel}</p>
                           <div
                             role="group"
                             tabIndex={0}
@@ -2240,10 +2336,10 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                                 style={{ filter: imagePreviewShadow }}
                               />
                             ) : (
-                              <span className="text-xs text-neutral-500">Đang xử lý...</span>
+                              <span className="text-xs text-neutral-400">Đang xử lý...</span>
                             )}
                             <span className="pointer-events-none absolute inset-2 rounded-lg border border-dashed border-white/55 opacity-70 transition-opacity group-hover/crop:opacity-100 group-focus-visible/crop:opacity-100" aria-hidden="true" />
-                            <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/65 px-2 py-1 text-[8px] text-white/80 opacity-0 transition-opacity group-hover/crop:opacity-100 group-focus-visible/crop:opacity-100">
+                            <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/65 px-2 py-1 text-xs text-white/80 opacity-0 transition-opacity group-hover/crop:opacity-100 group-focus-visible/crop:opacity-100">
                               Kéo để crop
                             </span>
                           </div>
@@ -2256,8 +2352,8 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           <div className="flex items-center gap-2">
                             <Crop className="w-4 h-4 text-amber-200" />
                             <div>
-                              <div className="text-[11px] text-neutral-200 font-medium">Tự crop theo chủ thể</div>
-                              <div className="text-[9px] text-neutral-500">Căn chủ thể vào giữa rồi vẫn cho phép scale và dịch chuyển</div>
+                              <div className="text-xs text-neutral-200 font-medium">Tự crop theo chủ thể</div>
+                              <div className="text-xs text-neutral-400">Căn chủ thể vào giữa rồi vẫn cho phép scale và dịch chuyển</div>
                             </div>
                           </div>
                           <button
@@ -2275,8 +2371,8 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                           <div className="flex items-center gap-2">
                             <Eraser className="w-4 h-4 text-rose-300" />
                             <div>
-                              <div className="text-[11px] text-neutral-200 font-medium">Xóa nền tự động</div>
-                              <div className="text-[9px] text-neutral-500">Nhận diện màu nền từ các góc ảnh</div>
+                              <div className="text-xs text-neutral-200 font-medium">Xóa nền tự động</div>
+                              <div className="text-xs text-neutral-400">Nhận diện màu nền từ các góc ảnh</div>
                             </div>
                           </div>
                           <button
@@ -2292,14 +2388,14 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                         {imgRemoveBackground && (
                           <div className="flex items-center gap-3">
                             <Eraser className="w-3.5 h-3.5 text-rose-300" />
-                            <label className="text-[10px] text-neutral-400 w-14 shrink-0">Độ xóa</label>
+                            <label className="text-xs text-neutral-400 w-14 shrink-0">Độ xóa</label>
                             <input type="range" min="10" max="180" value={imgBackgroundTolerance} onChange={(e) => { enableImageProcessing(); setImgBackgroundTolerance(Number(e.target.value)); }} className="flex-1 h-1 accent-rose-500" />
-                            <span className="text-[10px] text-neutral-500 w-9 text-right">{imgBackgroundTolerance}</span>
+                            <span className="text-xs text-neutral-400 w-9 text-right">{imgBackgroundTolerance}</span>
                           </div>
                         )}
                         <div className="flex items-center gap-3">
                           <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 border-white bg-neutral-700" aria-hidden="true" />
-                          <label htmlFor="image-white-outline" className="w-20 shrink-0 text-[10px] text-neutral-400">Viền trắng</label>
+                          <label htmlFor="image-white-outline" className="w-20 shrink-0 text-xs text-neutral-400">Viền trắng</label>
                           <input
                             id="image-white-outline"
                             type="range"
@@ -2310,45 +2406,45 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                             onChange={(event) => { enableImageProcessing(); setImgWhiteOutlineWidth(Number(event.target.value)); }}
                             className="h-1 flex-1 accent-white"
                           />
-                          <output htmlFor="image-white-outline" className="w-9 text-right text-[10px] tabular-nums text-neutral-400">
+                          <output htmlFor="image-white-outline" className="w-9 text-right text-xs tabular-nums text-neutral-400">
                             {imgWhiteOutlineWidth === 0 ? 'Tắt' : `${imgWhiteOutlineWidth}px`}
                           </output>
                         </div>
-                        <p className="-mt-1 pl-7 text-[9px] text-neutral-500">Viền được tạo theo mép chủ thể và lưu cùng ảnh.</p>
+                        <p className="-mt-1 pl-7 text-xs text-neutral-400">Viền được tạo theo mép chủ thể và lưu cùng ảnh.</p>
                         <div className="flex items-center gap-3">
                           <ZoomIn className="w-3.5 h-3.5 text-rose-300" />
-                          <label className="text-[10px] text-neutral-400 w-14 shrink-0">Scale icon</label>
+                          <label className="text-xs text-neutral-400 w-14 shrink-0">Scale icon</label>
                           <input type="range" min="100" max="300" step="10" value={imgZoom * 100} onChange={(e) => { enableImageProcessing(); setImgZoom(Number(e.target.value) / 100); }} className="flex-1 h-1 accent-rose-500" />
-                          <span className="text-[10px] text-neutral-500 w-9 text-right">{imgZoom.toFixed(1)}×</span>
+                          <span className="text-xs text-neutral-400 w-9 text-right">{imgZoom.toFixed(1)}×</span>
                         </div>
-                        <p className="text-[9px] text-neutral-500 -mt-1 pl-7">1× luôn hiển thị trọn ảnh; tối đa 3× trong khung icon.</p>
+                        <p className="text-xs text-neutral-400 -mt-1 pl-7">1× luôn hiển thị trọn ảnh; tối đa 3× trong khung icon.</p>
                         <div className="flex items-center gap-3">
                           <Move className="w-3.5 h-3.5 text-rose-300" />
-                          <label className="text-[10px] text-neutral-400 w-14 shrink-0">Ngang</label>
+                          <label className="text-xs text-neutral-400 w-14 shrink-0">Ngang</label>
                           <input type="range" min="-50" max="50" value={imgOffsetX} onChange={(e) => { enableImageProcessing(); setImgOffsetX(Number(e.target.value)); }} className="flex-1 h-1 accent-rose-500" />
-                          <span className="text-[10px] text-neutral-500 w-9 text-right">{Math.round(imgOffsetX)}</span>
+                          <span className="text-xs text-neutral-400 w-9 text-right">{Math.round(imgOffsetX)}</span>
                         </div>
                         <div className="flex items-center gap-3">
                           <Move className="w-3.5 h-3.5 rotate-90 text-rose-300" />
-                          <label className="text-[10px] text-neutral-400 w-14 shrink-0">Dọc</label>
+                          <label className="text-xs text-neutral-400 w-14 shrink-0">Dọc</label>
                           <input type="range" min="-50" max="50" value={imgOffsetY} onChange={(e) => { enableImageProcessing(); setImgOffsetY(Number(e.target.value)); }} className="flex-1 h-1 accent-rose-500" />
-                          <span className="text-[10px] text-neutral-500 w-9 text-right">{Math.round(imgOffsetY)}</span>
+                          <span className="text-xs text-neutral-400 w-9 text-right">{Math.round(imgOffsetY)}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5">
                           <div>
-                            <p className="text-[10px] font-medium text-neutral-300">Crop vuông 1:1</p>
-                            <p className="mt-0.5 text-[9px] text-neutral-500">Kéo trực tiếp trên preview, phóng bằng Scale icon.</p>
+                            <p className="text-xs font-medium text-neutral-300">Crop vuông 1:1</p>
+                            <p className="mt-0.5 text-xs text-neutral-400">Kéo trực tiếp trên preview, phóng bằng Scale icon.</p>
                           </div>
                           <button
                             type="button"
                             onClick={resetCrop}
-                            className="min-h-11 shrink-0 rounded-lg border border-white/10 px-3 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-amber-300/35 hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60"
+                            className="min-h-11 shrink-0 rounded-lg border border-white/10 px-3 text-xs font-semibold text-neutral-300 transition-colors hover:border-amber-300/35 hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60"
                           >
                             Đặt lại crop
                           </button>
                         </div>
                         <div className="flex items-center gap-3">
-                          <label className="text-[10px] text-neutral-400 w-16 shrink-0">Ngưỡng sáng</label>
+                          <label className="text-xs text-neutral-400 w-16 shrink-0">Ngưỡng sáng</label>
                           <input
                             type="range"
                             min="50"
@@ -2357,10 +2453,10 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                             onChange={(e) => { enableImageProcessing(); setImgThreshold(Number(e.target.value)); }}
                             className="flex-1 h-1 accent-rose-500"
                           />
-                          <span className="text-[10px] text-neutral-500 w-8 text-right">{imgThreshold}</span>
+                          <span className="text-xs text-neutral-400 w-8 text-right">{imgThreshold}</span>
                         </div>
                         <div className="flex items-center gap-3">
-                          <label className="text-[10px] text-neutral-400 w-16 shrink-0">Tương phản</label>
+                          <label className="text-xs text-neutral-400 w-16 shrink-0">Tương phản</label>
                           <input
                             type="range"
                             min="50"
@@ -2369,7 +2465,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                             onChange={(e) => { enableImageProcessing(); setImgContrast(Number(e.target.value) / 100); }}
                             className="flex-1 h-1 accent-amber-500"
                           />
-                          <span className="text-[10px] text-neutral-500 w-8 text-right">{imgContrast.toFixed(1)}</span>
+                          <span className="text-xs text-neutral-400 w-8 text-right">{imgContrast.toFixed(1)}</span>
                         </div>
 
                         <div className="flex gap-2">
@@ -2396,7 +2492,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                     onChange={handleImageUpload}
                     className="hidden"
                   />
-                  {imageError && <p className="text-[11px] text-rose-300">{imageError}</p>}
+                  {imageError && <p className="text-xs text-rose-300">{imageError}</p>}
                 </div>
 
                 {/* Submit */}
@@ -2405,7 +2501,7 @@ export const CardCollection: React.FC<CardCollectionProps> = ({
                   disabled={!hasValidCustomTimer || !hasValidCustomGain}
                   className="mt-2 w-full rounded-full bg-gold-gradient py-3 text-sm font-bold text-neutral-950 shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  {editingCard ? 'Lưu Thay Đổi' : 'Lưu Vào Bộ Sưu Tập'}
+                  {editingCard ? 'Lưu thay đổi' : 'Lưu vào bộ sưu tập'}
                 </button>
               </form>
             </motion.div>

@@ -1,5 +1,6 @@
 import {
   CardItem,
+  CardType,
   ClothingEffect,
   OutfitState,
   PlayerIndex,
@@ -22,13 +23,14 @@ export interface DynamicClothingSchedulerState {
 
 /** No clothing progression is scheduled before this intimacy level. */
 export const CLOTHING_SCHEDULE_START_PERCENT = 20;
-/** Outer layers (shirt/pants) are spread across this window so both reach underwear_only around 70–80%. */
-export const OUTER_LAYER_WINDOW: readonly [number, number] = [22, 76];
+/** Outer layers (shirt/pants) are spread evenly across this window, so both reach underwear_only around 62–65%. */
+export const OUTER_LAYER_WINDOW: readonly [number, number] = [20, 62];
 /**
- * Inner layers (bra/underwear) are spread across this later window so every
- * garment is normally removed by a card before Tim Hồng reaches 100%.
+ * Inner layers (bra/underwear) start just before the outer ones end and run on,
+ * so every garment is normally removed by a card before Tim Hồng reaches 100%
+ * without bunching the removals up at the end.
  */
-export const INNER_LAYER_WINDOW: readonly [number, number] = [76, 93];
+export const INNER_LAYER_WINDOW: readonly [number, number] = [60, 92];
 /** From this intimacy level any remaining garment may be offered immediately. */
 export const CLOTHING_CATCH_UP_PERCENT = 88;
 /** A skipped removal comes back after roughly one more completed card. */
@@ -68,9 +70,9 @@ const stratifiedPercents = (
 
 /**
  * Creates the Standard Journey clothing schedule.
- * One trigger per garment: outer layers are spread across 20–78% (alternating
- * players), inner layers across 82–95%, so the first removal lands around
- * 20–30% and both players reach underwear-only around 75–90%.
+ * One trigger per garment: outer layers are spread across OUTER_LAYER_WINDOW
+ * (alternating players), inner layers across INNER_LAYER_WINDOW, which overlaps
+ * it slightly, so removals are spread out instead of piling up at the end.
  */
 export const createDynamicClothingSchedule = (
   outfits: readonly [OutfitState, OutfitState],
@@ -185,6 +187,46 @@ export const getActiveClothingRemovalTarget = (
 };
 
 /**
+ * Whether the next random draw must be a Dare for a due removal.
+ *
+ * A due removal may let one draw pass without being attached, so a Truth can
+ * still come up in between; the draw after that is forced to a Dare. From the
+ * catch-up level (and for emergency strips) every due removal forces a Dare, so
+ * everything is off before Tim Hồng reaches 100%. `waitedItemId` is the trigger
+ * that already let one draw pass.
+ */
+export const shouldForceClothingDare = (
+  trigger: { itemId: string } | null,
+  waitedItemId: string | null,
+  intimacyPercent: number,
+): boolean =>
+  trigger !== null
+  && (trigger.itemId === waitedItemId || intimacyPercent >= CLOTHING_CATCH_UP_PERCENT);
+
+/**
+ * Why Truth cannot be picked in "choose" mode, or null when it can.
+ *
+ * Random mode already turns a due draw into a Dare. Without this check, picking
+ * Truth every time was a way around every removal, and once Tim Hồng is full a
+ * Truth no longer adds anything.
+ */
+export const getTruthLockReason = ({
+  availableTypes,
+  forceClothingDare,
+  intimacyPercent,
+}: {
+  availableTypes: readonly CardType[];
+  forceClothingDare: boolean;
+  intimacyPercent: number;
+}): string | null => {
+  if (!availableTypes.includes('truth')) return 'Không còn lá phù hợp';
+  if (!availableTypes.includes('dare')) return null;
+  if (intimacyPercent >= 100) return 'Tim Hồng đã đầy, chỉ còn thử thách';
+  if (forceClothingDare) return 'Lượt này đến hẹn cởi đồ';
+  return null;
+};
+
+/**
  * Injects a clothing removal effect into a card dynamically if not already present.
  * The card text and hint stay untouched; the table renders the removal as a
  * dedicated banner on the card face so it is read aloud with the dare.
@@ -281,8 +323,10 @@ export const updateDynamicClothingScheduler = (
 
   // Result === 'skipped'
   // Reschedule the item a little later so the next card is not another removal.
+  // An item already completed meanwhile (the skip penalty removed a garment from
+  // the same player) stays completed; reviving it would ask for an extra removal.
   const nextItems = state.items.map((item, index) => {
-    if (index === itemIndex) {
+    if (index === itemIndex && item.status !== 'completed') {
       return {
         ...item,
         status: 'pending' as const,

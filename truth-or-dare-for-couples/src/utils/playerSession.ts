@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetchWithTimeout';
+
 export interface PlayerSession {
   loggedIn: boolean;
   displayName?: string;
@@ -30,7 +32,7 @@ const readJson = async <T>(response: Response): Promise<T> => {
 };
 
 export const getPlayerSession = async (): Promise<PlayerSession> =>
-  readJson(await fetch('/api/player/session', { credentials: 'same-origin', cache: 'no-store' }));
+  readJson(await fetchWithTimeout('/api/player/session', { credentials: 'same-origin', cache: 'no-store' }));
 
 export const loginPlayer = async (displayName: string): Promise<PlayerSession> =>
   readJson(await fetch('/api/player/login', {

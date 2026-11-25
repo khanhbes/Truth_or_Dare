@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   GarmentConfig,
   GarmentSlot,
@@ -7,24 +7,10 @@ import type {
   PlayerPresentation,
 } from '../types';
 import { GARMENT_LABELS, getDisplayGarment, getEquippedGarmentMap } from '../utils/wardrobe';
+import { drawGarment } from './outfitGarments';
 import './outfit.css';
 
 const LAYER_ORDER: GarmentSlot[] = ['underwear', 'bra', 'pants', 'shirt'];
-
-const HIT_PATHS: Record<PlayerPresentation, Record<GarmentSlot, string>> = {
-  male: {
-    shirt: 'M88 102C72 106 61 118 58 137l5 27c4 8 8 19 9 34l2 40c19 11 53 11 72 0l2-40c1-15 5-26 9-34l5-27c-3-19-14-31-30-35Z',
-    pants: 'M77 202c21-6 45-6 66 0l4 48-5 130c-8 7-21 7-30 1l-3-104-7 104c-9 6-22 5-30-2l7-129Z',
-    bra: 'M80 122c19-8 41-8 60 0l8 55c-22 12-54 12-76 0Z',
-    underwear: 'M75 196c22-6 48-6 70 0l4 70c-11 8-27 9-39 3-12 6-28 5-39-3Z',
-  },
-  female: {
-    shirt: 'M89 102c-16 5-27 16-30 34l4 46c4 9 9 20 11 34l-2 22c20 13 56 13 76 0l-2-22c2-14 7-25 11-34l4-46c-3-18-14-29-30-34Z',
-    pants: 'M74 201c23-7 49-7 72 0l5 48-7 131c-8 7-21 7-30 1l-5-104-6 104c-9 6-22 5-30-2l8-130Z',
-    bra: 'M80 122c19-8 41-8 60 0l8 55c-22 12-54 12-76 0Z',
-    underwear: 'M71 187c24-7 54-7 78 0l3 75c-11 9-29 10-42 5-13 5-31 4-42-5Z',
-  },
-};
 
 /** Where the sparkle burst starts when a garment comes off. */
 const GARMENT_CENTER: Record<GarmentSlot, [number, number]> = {
@@ -47,6 +33,54 @@ const BURST_RAYS: Array<[number, number]> = [
 ];
 
 const LEAVE_MS = 900;
+
+/**
+ * Small signs of life: a blink every few seconds and, now and then, a breath of
+ * wind in the hair. Played as short one-off animations, because an endless one
+ * inside an SVG makes the browser draw the whole figure again on every frame.
+ * Swaying and breathing move the finished picture instead (outfit.css).
+ */
+const useFigureLife = (svgRef: React.RefObject<SVGSVGElement | null>) => {
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const stillness = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const timers: { blink?: number; breeze?: number } = {};
+    const play = (selector: string, frames: Keyframe[], options: KeyframeAnimationOptions) => {
+      if (document.hidden || stillness?.matches || svg.getClientRects().length === 0) return;
+      // The table stands still while a dialog covers it.
+      if (document.documentElement.hasAttribute('data-dialog-open') && svg.closest('.game-stage')) return;
+      svg.querySelectorAll(selector).forEach((part) => part.animate?.(frames, options));
+    };
+    const blink = () => {
+      play('.outfit-figure__eyes', [
+        { transform: 'scaleY(1)' }, { transform: 'scaleY(.08)', offset: 0.45 }, { transform: 'scaleY(1)' },
+      ], { duration: 190, easing: 'ease-in-out' });
+      timers.blink = window.setTimeout(blink, 2600 + Math.random() * 3600);
+    };
+    const breeze = () => {
+      play('.outfit-figure__hair-front, .outfit-figure__hair-back', [
+        { transform: 'rotate(0deg)' }, { transform: 'rotate(.9deg)', offset: 0.28 },
+        { transform: 'rotate(-.9deg)', offset: 0.68 }, { transform: 'rotate(0deg)' },
+      ], { duration: 3200, easing: 'ease-in-out' });
+      play('.outfit-figure__hair-clip', [
+        { transform: 'scale(1)', filter: 'brightness(1)' }, { transform: 'scale(1.18)', filter: 'brightness(1.45)' },
+        { transform: 'scale(1)', filter: 'brightness(1)' },
+      ], { duration: 900, delay: 700, easing: 'ease-in-out' });
+      play('.outfit-figure__twinkle', [
+        { opacity: 0.4, transform: 'scale(.8)' }, { opacity: 0.95, transform: 'scale(1.1) rotate(45deg)' },
+        { opacity: 0.4, transform: 'scale(.8)' },
+      ], { duration: 2600, easing: 'ease-in-out' });
+      timers.breeze = window.setTimeout(breeze, 6500 + Math.random() * 4500);
+    };
+    timers.blink = window.setTimeout(blink, 1200 + Math.random() * 2600);
+    timers.breeze = window.setTimeout(breeze, 2200 + Math.random() * 4000);
+    return () => {
+      window.clearTimeout(timers.blink);
+      window.clearTimeout(timers.breeze);
+    };
+  }, [svgRef]);
+};
 
 export interface OutfitFigureProps {
   outfit: OutfitConfig;
@@ -154,10 +188,10 @@ const FemaleHead = ({ paint }: { paint: PaintIds }) => (
 const MaleBase = ({ paint, garments, clipPrefix }: { paint: PaintIds; garments?: Partial<Record<GarmentSlot, GarmentConfig>>; clipPrefix?: string }) => {
   const hasShirt = Boolean(garments?.shirt);
   const hasPants = Boolean(garments?.pants);
-  const hasUnderwear = Boolean(garments?.underwear);
   const isShorts = garments?.pants?.styleId === 'shorts';
   const armClip = hasShirt && clipPrefix ? `url(#${clipPrefix}-a)` : undefined;
-  const legClip = clipPrefix ? (hasPants ? (isShorts ? `url(#${clipPrefix}-ls)` : `url(#${clipPrefix}-ll)`) : hasUnderwear ? `url(#${clipPrefix}-lu)` : undefined) : undefined;
+  // Underwear leaves the thighs visible below its leg openings, so only trousers hide the legs.
+  const legClip = clipPrefix && hasPants ? `url(#${clipPrefix}-${isShorts ? 'ls' : 'll'})` : undefined;
 
   return (
     <g className="outfit-figure__body outfit-figure__body--male" aria-hidden="true">
@@ -192,10 +226,9 @@ const FemaleBase = ({ paint, garments, clipPrefix }: { paint: PaintIds; garments
   const hasShirt = Boolean(garments?.shirt);
   const isCamisole = garments?.shirt?.styleId === 'camisole';
   const hasPants = Boolean(garments?.pants);
-  const hasUnderwear = Boolean(garments?.underwear);
   const isShorts = garments?.pants?.styleId === 'shorts';
   const armClip = hasShirt && !isCamisole && clipPrefix ? `url(#${clipPrefix}-a)` : undefined;
-  const legClip = clipPrefix ? (hasPants ? (isShorts ? `url(#${clipPrefix}-ls)` : `url(#${clipPrefix}-ll)`) : hasUnderwear ? `url(#${clipPrefix}-lu)` : undefined) : undefined;
+  const legClip = clipPrefix && hasPants ? `url(#${clipPrefix}-${isShorts ? 'ls' : 'll'})` : undefined;
 
   return (
     <g className="outfit-figure__body outfit-figure__body--female" aria-hidden="true">
@@ -251,251 +284,40 @@ const ModestyGlow = ({ presentation, garments, veilId }: { presentation: PlayerP
         hipsOpen ? [126, 232] : null,
       ].filter(Boolean).map((point, index) => (
         <g key={index} transform={`translate(${point![0]} ${point![1]})`}>
-          <path className="outfit-figure__twinkle" style={{ animationDelay: `${index * 0.7}s` }} d="M0-4.5 1.1-1.1 4.5 0 1.1 1.1 0 4.5-1.1 1.1-4.5 0-1.1-1.1Z" fill="#fff6d8" />
+          <path className="outfit-figure__twinkle" d="M0-4.5 1.1-1.1 4.5 0 1.1 1.1 0 4.5-1.1 1.1-4.5 0-1.1-1.1Z" fill="#fff6d8" />
         </g>
       ))}
     </g>
   );
 };
 
-/** Fabric volume (side shadows, a soft highlight) and a few creases, clipped to the garment. */
-const GarmentShading = ({ slot, clip, shadeH, shadeV }: { slot: GarmentSlot; clip: string; shadeH: string; shadeV: string }) => (
+/** Fabric volume: side shadows and a soft highlight, clipped to the garment. */
+const GarmentShading = ({ clip, shadeH, shadeV }: { clip: string; shadeH: string; shadeV: string }) => (
   <g clipPath={`url(#${clip})`} className="outfit-figure__fabric" aria-hidden="true">
     <rect x="40" y="90" width="140" height="310" fill={`url(#${shadeH})`} />
     <rect x="40" y="90" width="140" height="310" fill={`url(#${shadeV})`} />
-    {slot === 'shirt' && (
-      <>
-        <path d="M84 214c8 3 16 4 24 3M114 219c7 0 14-2 20-5M99 140c4 6 5 12 4 18M66 150c4 4 7 9 8 14M154 150c-4 4-7 9-8 14" fill="none" stroke="#1d0c13" strokeLinecap="round" strokeOpacity=".2" strokeWidth="1.6" />
-        <path d="M90 120c6-3 13-4 20-3M122 128c4 5 6 10 6 16" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".18" strokeWidth="1.6" />
-      </>
-    )}
-    {slot === 'pants' && (
-      <>
-        <path d="M88 300c4 3 9 3 13 1M119 302c4 2 9 2 13-1M105 214c2 9 4 17 4 25M84 250c2 10 2 22 1 34" fill="none" stroke="#1d0c13" strokeLinecap="round" strokeOpacity=".22" strokeWidth="1.6" />
-        <path d="M126 250c2 12 3 26 2 40" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".14" strokeWidth="2" />
-      </>
-    )}
-    {(slot === 'underwear' || slot === 'bra') && (
-      <path d={slot === 'bra' ? 'M86 158c6 3 13 3 18 0M117 158c6 3 13 3 18 0' : 'M86 214c8 4 16 5 24 4'} fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".22" strokeWidth="1.5" />
-    )}
   </g>
 );
 
-const MaleShirt = ({ garment }: { garment: GarmentConfig }) => {
-  const fill = garment.color;
-  if (garment.styleId === 'hoodie') {
-    return (
-      <>
-        <path d="M91 102c8-5 30-5 38 0c10 3 19 8 25 15c6 8 9 20 8 33l-12 5c-2-7-4-14-6-20c1 28 3 66 4 103c-18 12-58 12-76 0c1-37 3-75 4-103c-2 6-4 13-6 20l-12-5c-1-13 2-25 8-33c6-7 15-12 25-15Z" fill={fill} />
-        <path d="M89 104c0-16 42-16 42 0-3 16-14 24-21 24s-18-8-21-24Z" fill="#28141e" opacity=".22" />
-        <path d="M83 192c16-7 38-7 54 0l3 24c-18 8-42 8-60 0Z" fill="#28141e" opacity=".16" />
-        <path d="M101 119v30m18-30v30" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".55" strokeWidth="2" />
-        <circle cx="101" cy="150" r="2" fill="#fff" opacity=".72" />
-        <circle cx="119" cy="150" r="2" fill="#fff" opacity=".72" />
-      </>
-    );
-  }
-  if (garment.styleId === 'button_shirt') {
-    return (
-      <>
-        <path d="M91 102c8-4 30-4 38 0c10 3 19 8 25 15c6 7 9 19 8 31l-12 5c-2-6-4-12-6-18c1 28 3 66 4 103c-18 12-58 12-76 0c1-37 3-75 4-103c-2 6-4 12-6 18l-12-5c-1-12 2-24 8-31c6-7 15-12 25-15Z" fill={fill} />
-        <path d="m93 102 17 21 17-21m-17 21v116" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".56" strokeWidth="2" />
-        {[142, 161, 180, 199].map((y) => <circle key={y} cx="110" cy={y} r="1.8" fill="#fff" opacity=".72" />)}
-        <path d="M117 150h13v16h-13" fill="none" stroke="#fff" strokeOpacity=".34" strokeWidth="1.7" />
-        <path d="M74 236c18 6 44 6 62 0" fill="none" stroke="#fff" strokeOpacity=".28" strokeWidth="2" />
-      </>
-    );
-  }
+/**
+ * `shape` draws only the filled silhouette (safe inside <clipPath>, and reused
+ * for the selection outline and the hit area); `full` adds seams and details.
+ */
+const GarmentArtwork = ({ presentation, slot, garment, mode = 'full', clip }: {
+  presentation: PlayerPresentation;
+  slot: GarmentSlot;
+  garment: GarmentConfig;
+  mode?: 'full' | 'shape';
+  clip?: string;
+}) => {
+  const drawing = drawGarment(presentation, slot, garment);
+  if (mode === 'shape') return <>{drawing.shape}</>;
   return (
     <>
-      <path d="M91 102c8-4 30-4 38 0c10 3 19 8 25 15c6 7 9 19 8 31l-12 5c-2-6-4-12-6-18c1 28 3 66 4 103c-18 12-58 12-76 0c1-37 3-75 4-103c-2 6-4 12-6 18l-12-5c-1-12 2-24 8-31c6-7 15-12 25-15Z" fill={fill} />
-      <path d="M93 102c3 13 31 13 34 0" fill="#2c1822" opacity=".22" />
-      <path d="M74 236c18 6 44 6 62 0" fill="none" stroke="#fff" strokeOpacity=".3" strokeWidth="2.2" />
+      {drawing.shape}
+      {drawing.detail && <g clipPath={clip ? `url(#${clip})` : undefined}>{drawing.detail}</g>}
     </>
   );
-};
-
-const FemaleShirt = ({ garment }: { garment: GarmentConfig }) => {
-  const fill = garment.color;
-  if (garment.styleId === 'camisole') {
-    return (
-      <>
-        <path d="M91 103h7v23c7 6 17 6 24 0v-23h7v23c8 16 12 36 14 57c1 17 3 38 5 60c-18 14-58 14-76 0c1-22 3-43 5-60c2-21 7-41 14-57Z" fill={fill} />
-        <path d="M80 182c16 7 40 7 56 0m-58 34c18 8 44 8 62 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".38" strokeWidth="2.1" />
-      </>
-    );
-  }
-  if (garment.styleId === 'blouse') {
-    return (
-      <>
-        <path d="M91 102c8-4 30-4 38 0c10 3 19 8 25 15c6 8 9 20 8 33l-4 31-18-4 5-37 3 102c-18 13-56 13-76 0l3-102 5 37-18 4-4-31c-1-13 2-25 8-33c6-7 15-12 25-15Z" fill={fill} />
-        <path d="M93 102c2 14 32 14 34 0M72 240c18 8 44 8 62 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".44" strokeWidth="2.1" />
-        <path d="M104 114c0 7 3 10 6 10s6-3 6-10" fill="#fff" opacity=".18" />
-        <circle cx="110" cy="144" r="1.8" fill="#fff" opacity=".7" />
-        <circle cx="110" cy="165" r="1.8" fill="#fff" opacity=".7" />
-      </>
-    );
-  }
-  return (
-    <>
-      <path d="M91 102c8-4 30-4 38 0c10 3 19 8 24 14c6 8 9 20 8 31l-12 5c-2-6-4-12-6-18c0 30 2 68 3 108c-17 13-55 13-72 0c1-40 3-78 3-108c-2 6-4 12-6 18l-12-5c-1-11 2-23 8-31c5-6 14-11 24-14Z" fill={fill} />
-      <path d="M93 102c3 13 31 13 34 0" fill="#2c1822" opacity=".22" />
-      <path d="M72 240c18 8 44 8 62 0" fill="none" stroke="#fff" strokeOpacity=".3" strokeWidth="2.2" />
-    </>
-  );
-};
-
-const MalePants = ({ garment }: { garment: GarmentConfig }) => {
-  const isShorts = garment.styleId === 'shorts';
-  const isJeans = garment.styleId === 'jeans';
-  if (isShorts) {
-    return (
-      <>
-        <path d="M75 198c21-6 49-6 70 0l1 53-3 22c-9 5-22 6-32 1l-2-27-5 27c-10 5-23 4-32-2l2-21Z" fill={garment.color} />
-        <path d="M77 208c20 6 46 6 66 0m-33 1-1 38" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".4" strokeWidth="2.1" />
-        <path d="M78 232c9 1 17-3 21-13m42 13c-9 1-17-3-21-13" fill="none" stroke="#fff" strokeOpacity=".28" strokeWidth="1.7" />
-      </>
-    );
-  }
-  return (
-    <>
-      <path d="M75 198c21-6 49-6 70 0l1 51-4 129c-8 6-20 6-29 1l-4-108-7 109c-9 5-21 4-29-2l6-129Z" fill={garment.color} />
-      <path d="M77 208c20 6 46 6 66 0m-33 1-1 62" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".38" strokeWidth="2.1" />
-      {isJeans ? (
-        <>
-          <path d="M78 232c9 1 17-4 21-14m42 14c-9 1-17-4-21-14" fill="none" stroke="#fff" strokeOpacity=".32" strokeWidth="1.7" />
-          <path d="M75 356c8 3 17 3 25 1m15 0c8 3 17 3 25 0" fill="none" stroke="#fff" strokeOpacity=".28" strokeWidth="2.1" />
-        </>
-      ) : (
-        <path d="M91 215 84 373m43-158 6 158" fill="none" stroke="#fff" strokeOpacity=".17" strokeWidth="1.7" />
-      )}
-    </>
-  );
-};
-
-const FemalePants = ({ garment }: { garment: GarmentConfig }) => {
-  const isShorts = garment.styleId === 'shorts';
-  const isJeans = garment.styleId === 'jeans';
-  if (isShorts) {
-    return (
-      <>
-        <path d="M72 194c23-7 53-7 76 0l1 55-3 21c-10 7-24 8-35 3l-2-28-5 28c-11 5-25 4-35-3l2-21Z" fill={garment.color} />
-        <path d="M74 205c22 7 50 7 72 0m-36 1-1 39" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".4" strokeWidth="2.1" />
-        <path d="M75 230c10 2 19-3 23-14m47 14c-10 2-19-3-23-14" fill="none" stroke="#fff" strokeOpacity=".28" strokeWidth="1.7" />
-      </>
-    );
-  }
-  return (
-    <>
-      <path d="M72 194c23-7 53-7 76 0l1 53-6 131c-8 6-20 6-29 1l-5-108-6 109c-9 5-21 4-29-2l7-131Z" fill={garment.color} />
-      <path d="M74 205c22 7 50 7 72 0m-36 1-1 65" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".38" strokeWidth="2.1" />
-      {isJeans ? (
-        <>
-          <path d="M75 230c10 2 19-3 23-15m47 15c-10 2-19-3-23-15" fill="none" stroke="#fff" strokeOpacity=".32" strokeWidth="1.7" />
-          <path d="M76 356c8 3 17 3 25 1m15 0c8 3 17 3 25 0" fill="none" stroke="#fff" strokeOpacity=".28" strokeWidth="2.1" />
-        </>
-      ) : (
-        <path d="M91 212 85 373m42-161 5 161" fill="none" stroke="#fff" strokeOpacity=".17" strokeWidth="1.7" />
-      )}
-    </>
-  );
-};
-
-const MaleUnderwear = ({ garment }: { garment: GarmentConfig }) => {
-  if (garment.styleId === 'briefs') {
-    return (
-      <>
-        <path d="M76 202c21-6 47-6 68 0l-6 38c-7 10-17 18-28 24-11-6-21-14-28-24Z" fill={garment.color} />
-        <path d="M78 211c19 6 45 6 64 0m-32 2v39" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".42" strokeWidth="2.1" />
-      </>
-    );
-  }
-  const isBoxers = garment.styleId === 'boxers';
-  return (
-    <>
-      <path d={`M75 200c22-6 48-6 70 0l${isBoxers ? '3 67c-10 7-24 8-36 2l-2-30-4 30c-12 6-26 5-36-2Z' : '1 59c-9 7-22 8-32 3l-3-28-4 28c-10 5-23 4-32-3Z'}`} fill={garment.color} />
-      <path d="M77 211c20 6 46 6 66 0m-33 2-1 29" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".42" strokeWidth="2.1" />
-      {isBoxers && <path d="M84 226h12m28 0h12" stroke="#fff" strokeLinecap="round" strokeOpacity=".3" strokeWidth="1.7" />}
-    </>
-  );
-};
-
-const FemaleBra = ({ garment }: { garment: GarmentConfig }) => {
-  if (garment.styleId === 'sports_bra') {
-    return (
-      <>
-        <path d="M84 128c16-6 36-6 52 0l7 45c-18 9-48 9-66 0Z" fill={garment.color} />
-        <path d="m88 131 9-22m35 22-9-22M79 169c18 7 44 7 62 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.3" />
-      </>
-    );
-  }
-  if (garment.styleId === 'bralette') {
-    return (
-      <>
-        <path d="m77 173 9-43 24 24 24-24 9 43c-16 11-50 11-66 0Z" fill={garment.color} />
-        <path d="m88 133 9-24m35 24-9-24M79 169c18 7 44 7 62 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.3" />
-        <path d="m87 131 23 23 23-23" fill="none" stroke="#fff" strokeOpacity=".22" strokeWidth="1.7" />
-      </>
-    );
-  }
-  return (
-    <>
-      <path d="M77 152c2-15 13-20 33-3 20-17 31-12 33 3l-2 23c-19 8-43 8-62 0Z" fill={garment.color} />
-      <path d="M110 149v28m-30-23-7-22m67 22 7-22M80 171c18 7 42 7 60 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.2" />
-    </>
-  );
-};
-
-/** Geometry fitted to the male torso when a bra is transferred during a swap. */
-const MaleReceivedBra = ({ garment }: { garment: GarmentConfig }) => (
-  <>
-    <path
-      d="M76 139c18-7 50-7 68 0l2 28c-19 8-53 8-72 0Z"
-      fill={garment.color}
-    />
-    <path
-      d="m82 140 8-25m48 25-8-25M77 162c20 7 48 7 68 0M110 138v31"
-      fill="none"
-      stroke="#fff"
-      strokeLinecap="round"
-      strokeOpacity=".46"
-      strokeWidth="2.2"
-    />
-  </>
-);
-
-const FemaleUnderwear = ({ garment }: { garment: GarmentConfig }) => {
-  if (garment.styleId === 'high_waist') {
-    return (
-      <>
-        <path d="M73 190c22-7 52-7 74 0l-9 59c-8 9-18 15-28 20-10-5-20-11-28-20Z" fill={garment.color} />
-        <path d="M75 201c21 7 49 7 70 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.3" />
-      </>
-    );
-  }
-  if (garment.styleId === 'boyshort') {
-    return (
-      <>
-        <path d="M72 199c23-7 53-7 76 0l2 59c-10 8-25 9-37 4l-3-25-4 25c-12 5-27 4-37-4Z" fill={garment.color} />
-        <path d="M74 210c22 7 50 7 72 0" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.3" />
-      </>
-    );
-  }
-  return (
-    <>
-      <path d="M72 199c13 3 26 10 38 21 12-11 25-18 38-21l-11 53c-8 8-17 13-27 17-10-4-19-9-27-17Z" fill={garment.color} />
-      <path d="M75 204c12 4 24 10 35 19 11-9 23-15 35-19" fill="none" stroke="#fff" strokeLinecap="round" strokeOpacity=".48" strokeWidth="2.2" />
-    </>
-  );
-};
-
-const GarmentArtwork = ({ presentation, slot, garment }: { presentation: PlayerPresentation; slot: GarmentSlot; garment: GarmentConfig }) => {
-  if (slot === 'shirt') return presentation === 'male' ? <MaleShirt garment={garment} /> : <FemaleShirt garment={garment} />;
-  if (slot === 'pants') return presentation === 'male' ? <MalePants garment={garment} /> : <FemalePants garment={garment} />;
-  if (slot === 'bra') return presentation === 'male'
-    ? <MaleReceivedBra garment={garment} />
-    : <FemaleBra garment={garment} />;
-  return presentation === 'male' ? <MaleUnderwear garment={garment} /> : <FemaleUnderwear garment={garment} />;
 };
 
 type GarmentMap = Partial<Record<GarmentSlot, GarmentConfig>>;
@@ -520,6 +342,8 @@ export const OutfitFigure: React.FC<OutfitFigureProps> = ({
   mood = 0,
 }) => {
   const generatedId = normalizeSvgId(useId());
+  const svgRef = useRef<SVGSVGElement>(null);
+  useFigureLife(svgRef);
   const paint: PaintIds = {
     skin: `outfit-skin-${generatedId}`,
     skinShade: `outfit-skin-shade-${generatedId}`,
@@ -538,17 +362,24 @@ export const OutfitFigure: React.FC<OutfitFigureProps> = ({
   const clipId = `oc-${generatedId}`;
   const visibleGarments: GarmentMap = {};
   for (const slot of LAYER_ORDER) {
-    const garment = runtimeGarments?.[slot] ?? outfit.garments[slot];
-    if (visibleSlots.has(slot) && garment) {
-      visibleGarments[slot] = 'originPresentation' in garment
-        ? getDisplayGarment(garment, presentation)
-        : garment;
-    }
+    const equipped = runtimeGarments?.[slot];
+    const garment = equipped ? getDisplayGarment(equipped, presentation) : outfit.garments[slot];
+    if (visibleSlots.has(slot) && garment) visibleGarments[slot] = garment;
+  }
+  const isDimmed = (slot: GarmentSlot) =>
+    (editingSlot === 'bra' && slot === 'shirt') || (editingSlot === 'underwear' && slot === 'pants');
+  // What really covers the body: a garment shown as "about to come off" or faded
+  // for editing hides nothing, so the arms and legs underneath must be drawn.
+  const wornGarments: GarmentMap = {};
+  for (const slot of LAYER_ORDER) {
+    if (visibleGarments[slot] && slot !== previewRemovedSlot && !isDimmed(slot)) wornGarments[slot] = visibleGarments[slot];
   }
 
   // Garments that just came off keep rendering briefly so they can fly away.
   const signature = garmentSignature(visibleGarments);
   const previousGarmentsRef = useRef<GarmentMap | null>(null);
+  // Clothes already on when the figure appears do not animate in; later ones do.
+  const settledSlotsRef = useRef(new Set(LAYER_ORDER.filter((slot) => visibleGarments[slot])));
   const timersRef = useRef<number[]>([]);
   const [leaving, setLeaving] = useState<GarmentMap>({});
   const [reacting, setReacting] = useState(false);
@@ -560,7 +391,10 @@ export const OutfitFigure: React.FC<OutfitFigureProps> = ({
     const removed = LAYER_ORDER.filter((slot) => previous[slot] && !visibleGarments[slot]);
     if (removed.length === 0) return;
     const leavingNow: GarmentMap = {};
-    for (const slot of removed) leavingNow[slot] = previous[slot];
+    for (const slot of removed) {
+      leavingNow[slot] = previous[slot];
+      settledSlotsRef.current.delete(slot);
+    }
     setLeaving((current) => ({ ...current, ...leavingNow }));
     setReacting(true);
     timersRef.current.push(
@@ -591,6 +425,130 @@ export const OutfitFigure: React.FC<OutfitFigureProps> = ({
   const clampedMood = Math.max(0, Math.min(1, mood));
   const leavingSlots = LAYER_ORDER.filter((slot) => leaving[slot] && !visibleGarments[slot]);
 
+  // A few hundred SVG nodes: drawn again only when the clothes or the choice change,
+  // not at every turn (mood and turn only change the class and style around them).
+  const drawing = useMemo(() => (
+    <>
+      <defs>
+        <linearGradient id={paint.skin} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#f6c2b4" />
+          <stop offset=".5" stopColor="#e39c91" />
+          <stop offset="1" stopColor="#c27476" />
+        </linearGradient>
+        <linearGradient id={paint.skinShade} gradientUnits="userSpaceOnUse" x1="70" y1="0" x2="150" y2="0">
+          <stop offset="0" stopColor="#7d3d48" stopOpacity=".34" />
+          <stop offset=".3" stopColor="#7d3d48" stopOpacity="0" />
+          <stop offset=".46" stopColor="#fff4ea" stopOpacity=".16" />
+          <stop offset=".62" stopColor="#fff4ea" stopOpacity="0" />
+          <stop offset="1" stopColor="#7d3d48" stopOpacity=".38" />
+        </linearGradient>
+        <linearGradient id={paint.hair} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={presentation === 'male' ? '#4a2f3c' : '#6e3a55'} />
+          <stop offset="1" stopColor={presentation === 'male' ? '#24151c' : '#371b2b'} />
+        </linearGradient>
+        <linearGradient id={paint.hairShine} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#fff" stopOpacity="0" />
+          <stop offset=".5" stopColor="#ffe9f2" stopOpacity=".55" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={shadeH} gradientUnits="userSpaceOnUse" x1="58" y1="0" x2="162" y2="0">
+          <stop offset="0" stopColor="#14060c" stopOpacity=".36" />
+          <stop offset=".28" stopColor="#14060c" stopOpacity="0" />
+          <stop offset=".46" stopColor="#ffffff" stopOpacity=".08" />
+          <stop offset=".62" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="1" stopColor="#14060c" stopOpacity=".4" />
+        </linearGradient>
+        <linearGradient id={shadeV} gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="390">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".12" />
+          <stop offset=".18" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset=".85" stopColor="#14060c" stopOpacity="0" />
+          <stop offset="1" stopColor="#14060c" stopOpacity=".22" />
+        </linearGradient>
+        <radialGradient id={veilId}>
+          <stop offset="0" stopColor="#fff1f4" stopOpacity=".62" />
+          <stop offset=".55" stopColor="#ffd3de" stopOpacity=".3" />
+          <stop offset="1" stopColor="#ffd3de" stopOpacity="0" />
+        </radialGradient>
+        <clipPath id={`${clipId}-a`}><rect x="0" y="144" width="220" height="290" /></clipPath>
+        <clipPath id={`${clipId}-ll`}><rect x="0" y="376" width="220" height="50" /></clipPath>
+        <clipPath id={`${clipId}-ls`}><rect x="0" y="268" width="220" height="160" /></clipPath>
+        {LAYER_ORDER.filter((slot) => visibleGarments[slot]).map((slot) => (
+          <clipPath key={slot} id={`${clipId}-g-${slot}`}>
+            <GarmentArtwork presentation={presentation} slot={slot} garment={visibleGarments[slot]!} mode="shape" />
+          </clipPath>
+        ))}
+      </defs>
+      <ellipse className="outfit-figure__ground" cx="110" cy="398" rx="58" ry="9" aria-hidden="true" />
+      <g className={`outfit-figure__character ${reacting ? 'is-reacting' : ''}`}>
+        <g className="outfit-figure__breath">
+          {presentation === 'male'
+            ? <MaleBase paint={paint} garments={wornGarments} clipPrefix={clipId} />
+            : <FemaleBase paint={paint} garments={wornGarments} clipPrefix={clipId} />}
+          <ModestyGlow presentation={presentation} garments={wornGarments} veilId={veilId} />
+          {LAYER_ORDER.map((slot) => {
+            const garment = visibleGarments[slot];
+            if (!garment || !visibleSlots.has(slot)) return null;
+            // Pants fully cover the underwear; drawing it underneath only lets a sliver peek out at the hip.
+            const coveredByPants = slot === 'underwear' && visibleGarments.pants
+              && editingSlot !== 'underwear' && previewRemovedSlot !== 'pants' && !interactive.has('underwear');
+            if (coveredByPants) return null;
+            const canInteract = interactive.has(slot) && Boolean(onSelectSlot);
+            const isPreviewRemoved = previewRemovedSlot === slot;
+            const garmentClip = `${clipId}-g-${slot}`;
+
+            return (
+              <g
+                key={slot}
+                role={canInteract ? 'button' : undefined}
+                tabIndex={canInteract ? 0 : undefined}
+                aria-label={canInteract ? `${isPreviewRemoved ? 'Giữ lại' : 'Chọn bỏ'} ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}` : undefined}
+                aria-pressed={canInteract ? selectedSlot === slot : undefined}
+                onClick={canInteract ? () => onSelectSlot?.(slot) : undefined}
+                onKeyDown={canInteract ? (event) => handleKeyDown(event, slot) : undefined}
+                className={`outfit-figure__garment outfit-figure__garment--${slot} ${canInteract ? 'is-interactive' : ''} ${selectedSlot === slot ? 'is-selected' : ''} ${isPreviewRemoved ? 'is-preview-removed' : ''} ${isDimmed(slot) ? 'is-dimmed' : ''} ${settledSlotsRef.current.has(slot) ? 'is-settled' : ''}`}
+                data-slot={slot}
+              >
+                {/* Drawn first: the garment covers its inner half, leaving a clean rim around the real silhouette. */}
+                <g className="outfit-figure__selection-outline" aria-hidden="true">
+                  <GarmentArtwork presentation={presentation} slot={slot} garment={garment} mode="shape" />
+                </g>
+                <g className="outfit-figure__garment-artwork">
+                  <GarmentArtwork presentation={presentation} slot={slot} garment={garment} clip={garmentClip} />
+                  <GarmentShading clip={garmentClip} shadeH={shadeH} shadeV={shadeV} />
+                </g>
+                {canInteract && (
+                  <g className="outfit-figure__hit-area" aria-hidden="true">
+                    <GarmentArtwork presentation={presentation} slot={slot} garment={garment} mode="shape" />
+                  </g>
+                )}
+              </g>
+            );
+          })}
+          {leavingSlots.map((slot) => (
+            <g key={`leaving-${slot}`} className="outfit-figure__leaving" aria-hidden="true">
+              <g className={`outfit-figure__leaving-garment is-${LEAVE_DIRECTION[slot]}`}>
+                <GarmentArtwork presentation={presentation} slot={slot} garment={leaving[slot]!} />
+              </g>
+              <g transform={`translate(${GARMENT_CENTER[slot][0]} ${GARMENT_CENTER[slot][1]})`}>
+                {BURST_RAYS.map(([dx, dy], index) => (
+                  <path
+                    key={index}
+                    className="outfit-figure__spark"
+                    style={{ '--dx': `${dx}px`, '--dy': `${dy}px`, animationDelay: `${index * 35}ms` } as React.CSSProperties}
+                    d="M0-5 1.3-1.3 5 0 1.3 1.3 0 5-1.3 1.3-5 0-1.3-1.3Z"
+                    fill={index % 2 ? '#ffd27a' : '#ffc2d4'}
+                  />
+                ))}
+              </g>
+            </g>
+          ))}
+        </g>
+      </g>
+    </>
+    // Everything else the drawing reads is derived from these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [generatedId, presentation, signature, interactiveSlots.join(), selectedSlot, previewRemovedSlot, editingSlot, onSelectSlot, leaving, reacting]);
+
   return (
     <figure
       className={`outfit-figure outfit-figure--${presentation} ${compact ? 'outfit-figure--compact' : ''} ${active ? 'outfit-figure--active' : ''} ${clampedMood >= 0.5 ? 'outfit-figure--happy' : ''} ${className}`.trim()}
@@ -603,128 +561,18 @@ export const OutfitFigure: React.FC<OutfitFigureProps> = ({
           <i>♥</i><i>♥</i><i>♥</i>
         </span>
       )}
-      <svg
-        className="outfit-figure__svg"
-        viewBox="0 0 220 420"
-        role={interactive.size > 0 ? 'group' : undefined}
-        aria-label={interactive.size > 0 ? 'Các món đồ có thể chọn' : undefined}
-        aria-hidden={interactive.size === 0 ? true : undefined}
-      >
-        <defs>
-          <linearGradient id={paint.skin} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#f6c2b4" />
-            <stop offset=".5" stopColor="#e39c91" />
-            <stop offset="1" stopColor="#c27476" />
-          </linearGradient>
-          <linearGradient id={paint.skinShade} gradientUnits="userSpaceOnUse" x1="70" y1="0" x2="150" y2="0">
-            <stop offset="0" stopColor="#7d3d48" stopOpacity=".34" />
-            <stop offset=".3" stopColor="#7d3d48" stopOpacity="0" />
-            <stop offset=".46" stopColor="#fff4ea" stopOpacity=".16" />
-            <stop offset=".62" stopColor="#fff4ea" stopOpacity="0" />
-            <stop offset="1" stopColor="#7d3d48" stopOpacity=".38" />
-          </linearGradient>
-          <linearGradient id={paint.hair} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor={presentation === 'male' ? '#4a2f3c' : '#6e3a55'} />
-            <stop offset="1" stopColor={presentation === 'male' ? '#24151c' : '#371b2b'} />
-          </linearGradient>
-          <linearGradient id={paint.hairShine} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#fff" stopOpacity="0" />
-            <stop offset=".5" stopColor="#ffe9f2" stopOpacity=".55" />
-            <stop offset="1" stopColor="#fff" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id={shadeH} gradientUnits="userSpaceOnUse" x1="58" y1="0" x2="162" y2="0">
-            <stop offset="0" stopColor="#14060c" stopOpacity=".36" />
-            <stop offset=".28" stopColor="#14060c" stopOpacity="0" />
-            <stop offset=".46" stopColor="#ffffff" stopOpacity=".08" />
-            <stop offset=".62" stopColor="#ffffff" stopOpacity="0" />
-            <stop offset="1" stopColor="#14060c" stopOpacity=".4" />
-          </linearGradient>
-          <linearGradient id={shadeV} gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="390">
-            <stop offset="0" stopColor="#ffffff" stopOpacity=".12" />
-            <stop offset=".18" stopColor="#ffffff" stopOpacity="0" />
-            <stop offset=".85" stopColor="#14060c" stopOpacity="0" />
-            <stop offset="1" stopColor="#14060c" stopOpacity=".22" />
-          </linearGradient>
-          <radialGradient id={veilId}>
-            <stop offset="0" stopColor="#fff1f4" stopOpacity=".62" />
-            <stop offset=".55" stopColor="#ffd3de" stopOpacity=".3" />
-            <stop offset="1" stopColor="#ffd3de" stopOpacity="0" />
-          </radialGradient>
-          <clipPath id={`${clipId}-a`}><rect x="0" y="144" width="220" height="290" /></clipPath>
-          <clipPath id={`${clipId}-ll`}><rect x="0" y="376" width="220" height="50" /></clipPath>
-          <clipPath id={`${clipId}-ls`}><rect x="0" y="268" width="220" height="160" /></clipPath>
-          <clipPath id={`${clipId}-lu`}><rect x="0" y="256" width="220" height="180" /></clipPath>
-          {LAYER_ORDER.filter((slot) => visibleGarments[slot]).map((slot) => (
-            <clipPath key={slot} id={`${clipId}-g-${slot}`}>
-              <GarmentArtwork presentation={presentation} slot={slot} garment={visibleGarments[slot]!} />
-            </clipPath>
-          ))}
-        </defs>
-        <ellipse className="outfit-figure__ground" cx="110" cy="398" rx="58" ry="9" aria-hidden="true" />
-        <g className={`outfit-figure__character ${reacting ? 'is-reacting' : ''}`}>
-          <g className="outfit-figure__breath">
-            {presentation === 'male'
-              ? <MaleBase paint={paint} garments={visibleGarments} clipPrefix={clipId} />
-              : <FemaleBase paint={paint} garments={visibleGarments} clipPrefix={clipId} />}
-            <ModestyGlow presentation={presentation} garments={visibleGarments} veilId={veilId} />
-            {LAYER_ORDER.map((slot) => {
-              const garment = visibleGarments[slot];
-              if (!garment || !visibleSlots.has(slot)) return null;
-              // Pants fully cover the underwear; drawing it underneath only lets a sliver peek out at the hip.
-              const coveredByPants = slot === 'underwear' && visibleGarments.pants
-                && editingSlot !== 'underwear' && previewRemovedSlot !== 'pants' && !interactive.has('underwear');
-              if (coveredByPants) return null;
-              const canInteract = interactive.has(slot) && Boolean(onSelectSlot);
-              const isPreviewRemoved = previewRemovedSlot === slot;
-              const shouldDim = (editingSlot === 'bra' && slot === 'shirt') || (editingSlot === 'underwear' && slot === 'pants');
-              const hitPath = HIT_PATHS[presentation][slot];
-
-              return (
-                <g
-                  key={slot}
-                  role={canInteract ? 'button' : undefined}
-                  tabIndex={canInteract ? 0 : undefined}
-                  aria-label={canInteract ? `${isPreviewRemoved ? 'Giữ lại' : 'Chọn bỏ'} ${GARMENT_LABELS[slot].toLocaleLowerCase('vi')}` : undefined}
-                  aria-pressed={canInteract ? selectedSlot === slot : undefined}
-                  onClick={canInteract ? () => onSelectSlot?.(slot) : undefined}
-                  onKeyDown={canInteract ? (event) => handleKeyDown(event, slot) : undefined}
-                  className={`outfit-figure__garment outfit-figure__garment--${slot} ${canInteract ? 'is-interactive' : ''} ${selectedSlot === slot ? 'is-selected' : ''} ${isPreviewRemoved ? 'is-preview-removed' : ''} ${shouldDim ? 'is-dimmed' : ''}`}
-                  data-slot={slot}
-                >
-                  <g className="outfit-figure__garment-artwork">
-                    <GarmentArtwork presentation={presentation} slot={slot} garment={garment} />
-                    <GarmentShading slot={slot} clip={`${clipId}-g-${slot}`} shadeH={shadeH} shadeV={shadeV} />
-                  </g>
-                  {hitPath && (
-                    <>
-                      <path className="outfit-figure__selection-outline" d={hitPath} />
-                      <path className="outfit-figure__hit-area" d={hitPath} />
-                    </>
-                  )}
-                </g>
-              );
-            })}
-            {leavingSlots.map((slot) => (
-              <g key={`leaving-${slot}`} className="outfit-figure__leaving" aria-hidden="true">
-                <g className={`outfit-figure__leaving-garment is-${LEAVE_DIRECTION[slot]}`}>
-                  <GarmentArtwork presentation={presentation} slot={slot} garment={leaving[slot]!} />
-                </g>
-                <g transform={`translate(${GARMENT_CENTER[slot][0]} ${GARMENT_CENTER[slot][1]})`}>
-                  {BURST_RAYS.map(([dx, dy], index) => (
-                    <path
-                      key={index}
-                      className="outfit-figure__spark"
-                      style={{ '--dx': `${dx}px`, '--dy': `${dy}px`, animationDelay: `${index * 35}ms` } as React.CSSProperties}
-                      d="M0-5 1.3-1.3 5 0 1.3 1.3 0 5-1.3 1.3-5 0-1.3-1.3Z"
-                      fill={index % 2 ? '#ffd27a' : '#ffc2d4'}
-                    />
-                  ))}
-                </g>
-              </g>
-            ))}
-          </g>
-        </g>
-      </svg>
+      <div className="outfit-figure__sway">
+        <svg
+          ref={svgRef}
+          className="outfit-figure__svg"
+          viewBox="0 0 220 420"
+          role={interactive.size > 0 ? 'group' : undefined}
+          aria-label={interactive.size > 0 ? 'Các món đồ có thể chọn' : undefined}
+          aria-hidden={interactive.size === 0 ? true : undefined}
+        >
+          {drawing}
+        </svg>
+      </div>
       {name && <figcaption className="outfit-figure__name">{name}</figcaption>}
     </figure>
   );

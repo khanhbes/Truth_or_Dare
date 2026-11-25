@@ -249,6 +249,41 @@ export const createOutfitState = (config: OutfitConfig, ownerIndex?: 0 | 1): Out
   });
 };
 
+/** Rebuilds a saved in-game outfit; anything malformed falls back to the full starting outfit. */
+export const hydrateOutfitState = (
+  value: unknown,
+  fallback: OutfitConfig,
+  ownerIndex: 0 | 1,
+): OutfitState => {
+  if (!isRecord(value) || !Array.isArray(value.equippedGarments)) {
+    return createOutfitState(fallback, ownerIndex);
+  }
+  const worn = new Set<GarmentSlot>();
+  const equippedGarments = value.equippedGarments.flatMap((item): EquippedGarment[] => {
+    if (!isRecord(item)) return [];
+    const slot = item.slot as GarmentSlot;
+    const origin = item.originPresentation;
+    if (!GARMENT_DISPLAY_ORDER.includes(slot) || worn.has(slot)) return [];
+    if (origin !== 'male' && origin !== 'female') return [];
+    if (typeof item.id !== 'string' || !hasStyle(origin, slot, item.styleId) || !isHexColor(item.color)) return [];
+    worn.add(slot);
+    return [{
+      id: item.id,
+      slot,
+      styleId: item.styleId,
+      color: item.color,
+      originPresentation: origin,
+      ...(item.originalOwnerIndex === 0 || item.originalOwnerIndex === 1
+        ? { originalOwnerIndex: item.originalOwnerIndex }
+        : {}),
+    }];
+  });
+  return syncOutfitState({
+    initial: hydrateOutfitConfig(value.initial, fallback.presentation),
+    equippedGarments,
+  });
+};
+
 export const getPresentGarmentSlots = (state: OutfitState): GarmentSlot[] => {
   const present = new Set(state.equippedGarments.map((garment) => garment.slot));
   return GARMENT_DISPLAY_ORDER.filter((slot) => present.has(slot));

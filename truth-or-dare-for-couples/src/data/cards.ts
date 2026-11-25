@@ -968,7 +968,7 @@ export const LEVEL_INFO = {
   passionate: {
     name: 'Nồng nhiệt',
     icon: '💋',
-    badgeBg: 'bg-wine-950/80 text-red-300 border-red-500/50',
+    badgeBg: 'bg-red-950/80 text-red-300 border-red-500/50',
     color: '#7A1F2B',
     description: 'Quyến rũ, riêng tư, nồng nàn dành riêng cho cặp đôi gắn bó.',
   },

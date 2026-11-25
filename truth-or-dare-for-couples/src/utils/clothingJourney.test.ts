@@ -39,3 +39,13 @@ test('both-removal weighting follows intimacy bands and wardrobe catch-up uses n
   assert.ok(getBothRemovalWeight(90, outfits) > getBothRemovalWeight(30, outfits));
   assert.equal(getWardrobeCatchUpTarget(outfits), null);
 });
+
+test('resolving an opportunity never mutates the previous journey state', () => {
+  const before = { ...createClothingJourney(), turnsSinceClothing: 2 };
+  const after = resolveClothingOpportunity(before, 0, 'completed', 'self', 1);
+  assert.deepEqual(before.firstRemoval, [false, false]);
+  assert.deepEqual(before.removalCount, [0, 0]);
+  assert.deepEqual(after.firstRemoval, [false, true]);
+  assert.deepEqual(after.removalCount, [0, 1]);
+  assert.notEqual(after.firstRemoval, before.firstRemoval);
+});

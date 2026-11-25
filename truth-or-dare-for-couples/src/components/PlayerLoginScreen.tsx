@@ -78,25 +78,25 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
   };
 
   return (
-    <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#12090f] px-4 py-8 text-white sm:px-6">
+    <main className="relative grid min-h-svh place-items-center overflow-hidden bg-[#12090f] px-4 py-[clamp(1rem,4svh,2rem)] text-white sm:px-6 [@media(max-height:760px)]:py-3">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(244,63,94,0.2),transparent_44%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent_55%)]" />
 
       <section className="screen-enter relative w-full max-w-sm text-center">
-        <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full border border-rose-200/25 bg-rose-300/10 shadow-[0_0_45px_rgba(244,63,94,0.25)]">
+        <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full border border-rose-200/30 bg-rose-300/10 shadow-[0_0_45px_rgba(244,63,94,0.25)] [@media(max-height:830px)]:hidden">
           <Heart className="h-7 w-7 fill-rose-300/25 text-rose-200" aria-hidden="true" />
         </div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-rose-200/70">Truth or Dare · Cặp đôi</p>
-        <h1 className="mt-2 font-serif-romantic text-3xl font-bold leading-tight text-rose-50">
-          {isRegister ? 'Tạo tài khoản' : 'Chào mừng trở lại'}
+        <p className="text-sm font-semibold text-rose-200">Truth or Dare · Dành cho cặp đôi</p>
+        <h1 className="mt-1 font-serif-romantic text-3xl font-bold leading-tight text-rose-50">
+          {isRegister ? 'Tạo tài khoản' : 'Chào hai bạn'}
         </h1>
-        <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-neutral-400">
+        <p className="mx-auto mt-2 max-w-xs text-balance text-sm leading-relaxed text-neutral-300">
           {isRegister
-            ? 'Một tài khoản chung cho hai bạn, lưu lại mọi lá bài đã mở.'
-            : 'Đăng nhập để tiếp tục với những lá bài hai bạn đã mở.'}
+            ? 'Một tài khoản chung cho hai bạn, giữ lại mọi lá bài đã mở.'
+            : 'Đăng nhập để giữ những lá bài đã mở, hoặc chơi ngay không cần tài khoản.'}
         </p>
 
-        <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5 text-left backdrop-blur-xl">
-          <div className="mb-5 grid grid-cols-2 rounded-xl bg-white/[0.05] p-1 text-xs" role="tablist" aria-label="Đăng nhập hoặc tạo tài khoản">
+        <div className="mt-5 rounded-2xl border border-white/12 bg-[#1a0e14]/90 p-5 text-left [@media(max-height:760px)]:mt-3 [@media(max-height:760px)]:p-4">
+          <div className="mb-4 grid grid-cols-2 [@media(max-height:760px)]:mb-3 rounded-xl bg-white/[0.05] p-1 text-sm" role="tablist" aria-label="Đăng nhập hoặc tạo tài khoản">
             {(['login', 'register'] as const).map((action) => (
               <button
                 key={action}
@@ -104,8 +104,8 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                 role="tab"
                 aria-selected={coupleAction === action}
                 onClick={() => switchAction(action)}
-                className={`min-h-9 rounded-lg font-semibold transition-colors ${
-                  coupleAction === action ? 'bg-rose-400/20 text-rose-100 ring-1 ring-rose-300/35' : 'text-neutral-400 hover:text-white'
+                className={`min-h-10 rounded-lg font-semibold transition-colors ${
+                  coupleAction === action ? 'bg-rose-400/20 text-rose-50 ring-1 ring-rose-300/45' : 'text-neutral-300 hover:text-white'
                 }`}
               >
                 {action === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}
@@ -113,9 +113,9 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
             ))}
           </div>
 
-          <form onSubmit={handleCoupleSubmit} className="space-y-4">
+          <form onSubmit={handleCoupleSubmit} className="space-y-4 [@media(max-height:760px)]:space-y-3">
             <div>
-              <label htmlFor="couple-name" className="block text-xs font-medium text-neutral-300">
+              <label htmlFor="couple-name" className="block text-sm font-medium text-neutral-200">
                 Tên tài khoản hoặc email
               </label>
               <input
@@ -126,13 +126,13 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                 autoComplete="username"
                 autoFocus
                 placeholder="vd: minh-va-lan"
-                className="mt-1.5 min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] px-3.5 text-sm text-white outline-none transition-colors placeholder:text-neutral-600 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
+                className="mt-1.5 min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] px-3.5 text-base text-white outline-none transition-colors placeholder:text-neutral-400 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
               />
             </div>
 
             <div>
-              <label htmlFor="couple-pin" className="block text-xs font-medium text-neutral-300">
-                Mã PIN <span className="text-neutral-500">(4–8 chữ số)</span>
+              <label htmlFor="couple-pin" className="block text-sm font-medium text-neutral-200">
+                Mã PIN <span className="text-neutral-400">(4–8 chữ số)</span>
               </label>
               <div className="relative mt-1.5">
                 <input
@@ -145,13 +145,13 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
                   onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
                   autoComplete={isRegister ? 'new-password' : 'current-password'}
                   placeholder={isRegister ? 'Đặt mã PIN cho tài khoản' : 'Nhập mã PIN'}
-                  className="min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] pl-3.5 pr-9 text-sm tracking-widest text-white outline-none transition-colors placeholder:tracking-normal placeholder:text-neutral-600 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
+                  className="min-h-11 w-full rounded-xl border border-white/12 bg-white/[0.04] pl-3.5 pr-9 text-base tracking-widest text-white outline-none transition-colors placeholder:tracking-normal placeholder:text-neutral-400 focus:border-rose-400/60 focus:ring-1 focus:ring-rose-400/30"
                 />
-                <KeyRound className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-neutral-500" aria-hidden="true" />
+                <KeyRound className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-neutral-400" aria-hidden="true" />
               </div>
             </div>
 
-            {error && <p role="alert" className="text-xs leading-relaxed text-rose-300">{error}</p>}
+            {error && <p role="alert" className="text-sm leading-relaxed text-rose-200">{error}</p>}
 
             <button
               type="submit"
@@ -166,7 +166,7 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
           </form>
         </div>
 
-        <div className="my-5 flex items-center gap-3 text-[11px] text-neutral-500" aria-hidden="true">
+        <div className="my-4 flex items-center gap-3 text-xs text-neutral-400 [@media(max-height:760px)]:my-2" aria-hidden="true">
           <span className="h-px flex-1 bg-white/10" /> hoặc <span className="h-px flex-1 bg-white/10" />
         </div>
 
@@ -179,9 +179,12 @@ export const PlayerLoginScreen: React.FC<PlayerLoginScreenProps> = ({
           {busy === 'guest' ? 'Đang vào…' : 'Chơi ngay, không cần tài khoản'}
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </button>
-        <p className="mt-2 text-[11px] text-neutral-500">Lá bài đã mở chỉ được lưu trên máy này.</p>
+        <p className="mt-2 text-xs text-neutral-300">Lá bài đã mở chỉ được lưu trên máy này.</p>
 
-        <div className="mt-8">
+        <p className="mt-4 text-sm text-neutral-300 [@media(max-height:760px)]:mt-2">
+          <strong className="font-semibold text-rose-200">18+</strong> · Dành cho hai người lớn, tự nguyện.
+        </p>
+        <div className="mt-3 [@media(max-height:760px)]:mt-2">
           <AdminModeButton />
         </div>
       </section>
